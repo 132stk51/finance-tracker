@@ -167,6 +167,7 @@ let editingId = null, menu = null, menuGuard = 0, pressTimer = null;
 let pendingDelete = null, confirmBox = null, editorBox = null, showTrashFlag = false;
 let imp = null; // {step, rows, name, hasHeader, map:{date,payee,amount,sign,debit,credit,category}, msg}
 let pinHash = null, locked = false;
+let selMode = false, selSet = new Set();
 let panelBox = null;
 function openPanel(html) { panelBox = html; renderOverlays(); }
 function closePanel() { panelBox = null; renderOverlays(); }
@@ -425,6 +426,33 @@ function restorePick() { const inp = document.createElement("input"); inp.type =
   inp.click();
 }
 
+/* ---------- multi-select delete ---------- */
+function startSelect(id) { closeMenu(); selMode = true; selSet = new Set(id ? [id] : []); render(); }
+function exitSelect() { selMode = false; selSet = new Set(); render(); }
+function toggleSel(id) { selSet.has(id) ? selSet.delete(id) : selSet.add(id); render(); }
+function selAllToggle() {
+  const ids = activeMonth().map((t) => t.id);
+  if (ids.every((id) => selSet.has(id))) selSet = new Set(); else ids.forEach((id) => selSet.add(id));
+  render();
+}
+function askDeleteMany() {
+  if (!selSet.size) return;
+  const ids = [...selSet];
+  const first = txns.filter((t) => ids.includes(t.id));
+  const names = first.slice(0, 3).map((t) => `"${t.payee || t.catName}" (${fmt(t.amount)})`).join(", ");
+  confirmBox = {
+    title: `Delete ${ids.length} entr${ids.length === 1 ? "y" : "ies"}?`,
+    body: `${names}${ids.length > 3 ? ` and ${ids.length - 3} more` : ""} will be moved to Trash. They disappear from your totals immediately, are kept for 7 days (restore anytime from the Trash in the Entries tab), and are erased permanently after that.`,
+    cta: `Move ${ids.length} to Trash`, danger: true,
+    action: () => {
+      const now = new Date().toISOString();
+      txns = txns.map((t) => (ids.includes(t.id) ? { ...t, deletedAt: now } : t));
+      save(); exitSelect();
+    },
+  };
+  renderOverlays();
+}
+
 /* ---------- rendering ---------- */
 const NAV = [ ["dashboard","📊","Dashboard"], ["txns","🧾","Entries"], ["import","📥","Import"], ["settings","⚙️","Settings"] ];
 
@@ -439,6 +467,7 @@ function render() {
   const ms = $("monthSel");
   ms.innerHTML = months.map((m) => `<option value="${m}" ${m === month ? "selected" : ""}>${monthLabel(m)}</option>`).join("");
   ms.onchange = () => { month = ms.value; render(); };
+  if (view !== "txns") { selMode = false; selSet = new Set(); }
   if (locked) { renderLocked(); return; }
   if (view === "dashboard") renderDash();
   else if (view === "txns") renderTxns();
@@ -496,8 +525,11 @@ function txnRow(t, inTrash) {
   const removed1 = catById()[t.categoryId] ? "" : " (removed)", removed2 = accById()[t.accountId] ? "" : " (removed)";
   const src = t.source === "manual" ? "✍️ manual" : t.source === "statement" ? "🧾 statement" : "sample";
   const meta = `${t.date} · ${esc(t.catName)}${removed1} · ${esc(t.accName)}${removed2} · ${src}${t.matchedWith ? ' · <span class="ok">✅ verified</span>' : ""}`;
-  return `<div class="txn" ontouchstart="touchStart(event,'${t.id}')" ontouchend="touchEnd()" ontouchmove="touchEnd()"
-      oncontextmenu="event.preventDefault();touchEnd();openMenu('${t.id}',event.clientX,event.clientY)">
+  const selBadge = selMode && !inTrash
+    ? `<span onclick="event.stopPropagation();toggleSel('${t.id}')" style="width:22px;height:22px;border-radius:50%;flex-shrink:0;border:2px solid ${selSet.has(t.id) ? "#4f46e5" : "#475569"};background:${selSet.has(t.id) ? "#4f46e5" : "transparent"};color:#fff;font-size:13px;display:inline-flex;align-items:center;justify-content:center;">${selSet.has(t.id) ? "✓" : ""}</span>`
+    : "";
+  const rowTap = selMode && !inTrash ? ` onclick="toggleSel('${t.id}')"` : ` oncontextmenu="event.preventDefault();touchEnd();openMenu('${t.id}',event.clientX,event.clientY)" ontouchstart="touchStart(event,'${t.id}')" ontouchend="touchEnd()" ontouchmove="touchEnd()"`;
+  return `<div class="txn"${rowTap}>
     <div style="width:36px;height:36px;border-radius:50%;background:${t.catColor || "#94a3b8"}22;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${t.catIcon || "📦"}</div>
     <div style="flex:1;min-width:0;">
       <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(t.payee || t.catName)}</div>
@@ -506,19 +538,30 @@ function txnRow(t, inTrash) {
     <div style="font-weight:700;font-size:13px;${t.type === "income" ? "color:#34d399" : "color:#fb7185"}">${t.type === "income" ? "+" : "-"}${fmt(t.amount)}</div>
     ${inTrash
       ? `<small class="warn" style="white-space:nowrap">${daysLeft(t)}d left</small><button class="btn ghost" style="padding:5px 9px;font-size:11px" onclick="restoreTxn('${t.id}')">Restore</button><button class="btn ghost" style="padding:5px 9px;font-size:11px;color:#fb7185" onclick="if(confirm('Delete permanently? This cannot be undone.'))permDelete('${t.id}')">Delete</button>`
-      : `<span class="dots" onclick="event.stopPropagation();const r=this.getBoundingClientRect();openMenu('${t.id}',Math.max(8,r.left-135),r.bottom+6);">⋯</span>`}
+      : (selMode ? "" : `<span class="dots" onclick="event.stopPropagation();const r=this.getBoundingClientRect();openMenu('${t.id}',Math.max(8,r.left-135),r.bottom+6);">⋯</span>`)}
+    ${selBadge}
   </div>`;
 }
 
 function renderTxns() {
   const list = activeMonth().sort((a, b) => b.date.localeCompare(a.date));
   const tr = trash();
-  $("content").innerHTML = `
-    <div class="row" style="justify-content:space-between;margin-bottom:10px;">
-      <span class="muted">👆 Hold an entry (or right-click / tap ⋯) for Edit / Delete</span>
-      <button class="btn ghost" style="font-size:11px" onclick="showTrashFlag=true;renderOverlays()">🗑️ Trash${tr.length ? ` <b class="warn">(${tr.length})</b>` : ""}</button>
-    </div>
-    ${list.length ? list.map((t) => txnRow(t, false)).join("") : '<p class="muted" style="text-align:center;padding:30px 0">No transactions this month. Tap + Add.</p>'}`;
+  const header = selMode
+    ? `<div class="row" style="justify-content:space-between;margin-bottom:10px;position:sticky;top:62px;z-index:5;background:rgba(2,6,23,.95);padding:8px 0;">
+        <button class="btn ghost" style="font-size:11px" onclick="selAllToggle()">${list.length && list.every((t) => selSet.has(t.id)) ? "Deselect all" : "Select all"}</button>
+        <span class="muted">${selSet.size} selected</span>
+        <button class="btn danger" style="font-size:11px" ${selSet.size ? "" : "disabled"} onclick="askDeleteMany()">🗑️ Delete</button>
+        <button class="btn ghost" style="font-size:11px" onclick="exitSelect()">Done</button>
+      </div>`
+    : `<div class="row" style="justify-content:space-between;margin-bottom:10px;">
+        <span class="muted">👆 Hold an entry (or right-click / tap ⋯) for Edit / Delete / Select</span>
+        <div class="row" style="gap:6px;">
+          <button class="btn ghost" style="font-size:11px" onclick="startSelect()">☑ Select</button>
+          <button class="btn ghost" style="font-size:11px" onclick="showTrashFlag=true;renderOverlays()">🗑️ Trash${tr.length ? ` <b class="warn">(${tr.length})</b>` : ""}</button>
+        </div>
+      </div>`;
+  $("content").innerHTML = header +
+    (list.length ? list.map((t) => txnRow(t, false)).join("") : '<p class="muted" style="text-align:center;padding:30px 0">No transactions this month. Tap + Add.</p>');
 }
 
 function renderImport() {
@@ -676,6 +719,7 @@ function renderOverlays() {
       <div style="position:absolute;left:${menu.x}px;top:${menu.y}px;width:150px;background:#1e293b;border:1px solid #475569;border-radius:12px;overflow:hidden;box-shadow:0 15px 40px rgba(0,0,0,.6);font-size:14px;">
         <div style="padding:8px 12px;font-size:10px;color:#94a3b8;border-bottom:1px solid #334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(t.payee || t.catName)} · ${fmt(t.amount)}</div>
         <div style="padding:10px 12px;cursor:pointer" onclick="closeMenu();openAdd('${t.id}')">✏️ Edit</div>
+        <div style="padding:10px 12px;cursor:pointer" onclick="closeMenu();startSelect('${t.id}')">☑ Select</div>
         <div style="padding:10px 12px;cursor:pointer;color:#fb7185" onclick="askDelete('${t.id}')">🗑️ Delete</div>
       </div></div>`;
   }
