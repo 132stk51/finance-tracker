@@ -172,13 +172,16 @@ let panelBox = null;
 function openPanel(html) { panelBox = html; renderOverlays(); }
 function closePanel() { panelBox = null; renderOverlays(); }
 
-function save() { try { localStorage.setItem("fty", JSON.stringify({ txns, cats, accs, pinHash })); } catch (e) {} }
+function save() {
+  try { localStorage.setItem("fty", JSON.stringify({ txns, cats, accs, pinHash })); } catch (e) {}
+  scheduleSync();
+}
 function loadAll() {
   try {
     const d = JSON.parse(localStorage.getItem("fty") || "null");
     if (d && d.cats && d.cats.length) { txns = d.txns || []; cats = d.cats; accs = d.accs || DEFAULT_ACCOUNTS; pinHash = d.pinHash || null; return; }
   } catch (e) {}
-  cats = DEFAULT_CATEGORIES.slice(); accs = DEFAULT_ACCOUNTS.slice(); txns = makeSeed(cats, accs); save();
+  cats = DEFAULT_CATEGORIES.slice(); accs = DEFAULT_ACCOUNTS.slice(); txns = []; save();
 }
 loadAll();
 // purge trash older than 7 days
@@ -426,6 +429,95 @@ function restorePick() { const inp = document.createElement("input"); inp.type =
   inp.click();
 }
 
+/* ---------- encrypted cloud sync (private GitHub Gist relay) ---------- */
+let sync = null, pushTimer = null, syncBusy = false;
+function loadSync() { try { sync = JSON.parse(localStorage.getItem("ftySync") || "null"); } catch (e) { sync = null; } }
+function saveSync() { try { localStorage.setItem("ftySync", JSON.stringify(sync)); } catch (e) {} }
+loadSync();
+const b64e = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+const b64d = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+async function syncKey() { return crypto.subtle.importKey("raw", b64d(sync.keyB64), "AES-GCM", true, ["encrypt", "decrypt"]); }
+async function packState() {
+  const key = await syncKey();
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(JSON.stringify({ txns, cats, accs })));
+  return JSON.stringify({ iv: b64e(iv), data: b64e(ct), updatedAt: new Date().toISOString() });
+}
+async function unpackState(content) {
+  const d = JSON.parse(content);
+  const key = await syncKey();
+  const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64d(d.iv) }, key, b64d(d.data));
+  return { data: JSON.parse(new TextDecoder().decode(pt)), updatedAt: d.updatedAt };
+}
+function ghHeaders(token) { return { Authorization: "token " + token, Accept: "application/vnd.github+json" }; }
+function scheduleSync() { if (!sync || syncBusy) return; clearTimeout(pushTimer); pushTimer = setTimeout(() => pushSync(true), 2500); }
+async function pushSync(silent) {
+  if (!sync || !sync.gistId) return;
+  try {
+    const content = await packState();
+    const r = await fetch("https://api.github.com/gists/" + sync.gistId, { method: "PATCH", headers: ghHeaders(sync.token), body: JSON.stringify({ files: { "finance-data.json": { content } } }) });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    sync.lastSyncAt = new Date().toISOString(); sync.lastError = null; saveSync();
+    if (view === "settings" && !locked) renderOverlays(), render();
+  } catch (e) {
+    sync.lastError = String(e.message || e); saveSync();
+    if (!silent && !locked) alert("Sync push failed: " + sync.lastError + " (check internet or token)");
+  }
+}
+async function pullSync(silent) {
+  if (!sync || !sync.gistId) return;
+  try {
+    syncBusy = true;
+    const r = await fetch("https://api.github.com/gists/" + sync.gistId, { headers: ghHeaders(sync.token) });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const g = await r.json();
+    const f = g.files && g.files["finance-data.json"];
+    if (!f || !f.content) { syncBusy = false; if (!silent) alert("Cloud copy is empty — push first."); return; }
+    const { data, updatedAt } = await unpackState(f.content);
+    if (updatedAt > (sync.lastSyncAt || "")) {
+      txns = data.txns || []; cats = data.cats || cats; accs = data.accs || accs;
+      try { localStorage.setItem("fty", JSON.stringify({ txns, cats, accs, pinHash })); } catch (e) {}
+      sync.lastSyncAt = updatedAt; sync.lastError = null; saveSync(); render();
+      if (!silent) alert("Pulled latest data (" + txns.length + " entries).");
+    } else { if (!silent) alert("Already up to date."); }
+    syncBusy = false;
+  } catch (e) {
+    syncBusy = false;
+    if (!silent) alert("Sync pull failed: " + (e.message || e));
+  }
+}
+async function createSync() {
+  const token = ($("ghToken") ? $("ghToken").value : "").trim();
+  if (!token) { alert("First create and paste a GitHub personal access token (settings instructions above)."); return; }
+  const old = sync; sync = { token, gistId: null, keyB64: null, lastSyncAt: "" };
+  try {
+    sync.keyB64 = b64e(crypto.getRandomValues(new Uint8Array(32)));
+    const content = await packState();
+    const r = await fetch("https://api.github.com/gists", { method: "POST", headers: ghHeaders(token), body: JSON.stringify({ description: "Finance Tracker (encrypted sync)", public: false, files: { "finance-data.json": { content } } }) });
+    const g = await r.json();
+    if (!g.id) throw new Error(g.message || "create failed");
+    sync.gistId = g.id; sync.lastSyncAt = new Date().toISOString(); saveSync(); render();
+  } catch (e) { sync = old; saveSync(); alert("Could not create sync: " + (e.message || e)); }
+}
+async function linkSync() {
+  const token = ($("ghToken") ? $("ghToken").value : "").trim();
+  let code;
+  try { code = JSON.parse(($("syncCode") ? $("syncCode").value : "").trim()); } catch (e) { alert("Paste the Sync Code exactly as shown on the other device."); return; }
+  if (!token || !code.gistId || !code.keyB64) { alert("Both a token and the Sync Code are needed."); return; }
+  const old = sync; sync = { token, gistId: code.gistId, keyB64: code.keyB64, lastSyncAt: "" };
+  saveSync(); await pullSync(false);
+  if (!sync || sync.lastError) { sync = old; saveSync(); render(); }
+  else render();
+}
+function showSyncCode() {
+  const code = JSON.stringify({ gistId: sync.gistId, keyB64: sync.keyB64 });
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(code).then(() => alert("Sync Code copied to clipboard.\n\nIt looks like this:\n" + code), () => alert(code));
+  else alert(code);
+}
+function unlinkSync() {
+  if (confirm("Unlink this device from cloud sync?\n\nData already on this device stays. The private Gist also stays (other linked devices keep syncing).")) { sync = null; saveSync(); render(); }
+}
+
 /* ---------- multi-select delete ---------- */
 function startSelect(id) { closeMenu(); selMode = true; selSet = new Set(id ? [id] : []); render(); }
 function exitSelect() { selMode = false; selSet = new Set(); render(); }
@@ -651,13 +743,36 @@ function renderSettings() {
         <button class="btn ghost" style="padding:4px 9px;font-size:11px;color:#fb7185" onclick="askDeleteCA('acc','${a.id}')">Delete</button>
       </div>`; }).join("")}
     </div>
+    <div class="card" style="margin-bottom:14px;">
+      <h4>☁️ Cloud sync (phone ↔ web)</h4>
+      <p class="muted">Syncs through a <b>private GitHub Gist</b>. The app uploads only an <b>encrypted copy</b> of your data; the decryption key lives on your devices, never on GitHub. Saving a change pushes automatically; opening the app pulls newer data.</p>
+      ${sync && sync.gistId ? `
+        <p class="muted">Linked to gist <code>${esc(sync.gistId.slice(0, 8))}…</code>${sync.lastSyncAt ? " · Last sync: " + new Date(sync.lastSyncAt).toLocaleString("en-IN") : ""}${sync.lastError ? ` <span class="bad">· Error: ${esc(sync.lastError)}</span>` : ' <span class="ok">· ✓</span>'}</p>
+        <div class="row" style="flex-wrap:wrap;gap:8px;">
+          <button class="btn primary" onclick="pushSync(false)">⬆️ Push now</button>
+          <button class="btn primary" onclick="pullSync(false)">⬇️ Pull now</button>
+          <button class="btn ghost" onclick="showSyncCode()">🔗 Show Sync Code</button>
+          <button class="btn ghost" style="color:#fb7185" onclick="unlinkSync()">Unlink</button>
+        </div>`
+      : `
+        <div class="muted" style="margin-bottom:8px;"><b>One-time setup on this device:</b> create a GitHub token at github.com → Settings → Developer settings → Personal access tokens → <i>Generate new token (classic)</i> → tick only the <b>gist</b> scope → copy the token here.</div>
+        <input id="ghToken" placeholder="ghp_… your token (stored only on this device)" style="font-size:12px;margin-bottom:8px;" />
+        <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+          <button class="btn primary" onclick="createSync()">① Start new cloud sync</button>
+        </div>
+        <div class="muted" style="margin-bottom:6px;"><b>Second device (e.g. web):</b> paste a token above <i>and</i> the Sync Code from the first device, then:</div>
+        <textarea id="syncCode" rows="2" style="font-size:11px;font-family:monospace" placeholder='{"gistId":"…","keyB64":"…"}'></textarea>
+        <div style="height:8px"></div>
+        <button class="btn" onclick="linkSync()">② Link this device</button>
+      `}
+    </div>
     <div class="card">
       <h4>Backup &amp; data</h4>
       <p class="muted">Your data lives only in this browser on this device. Take a backup regularly — especially before clearing browser data.</p>
       <div class="row" style="flex-wrap:wrap;gap:8px;">
         <button class="btn primary" onclick="backupData()">⬇️ Download backup (JSON)</button>
         <button class="btn ghost" onclick="restorePick()">⬆️ Restore backup</button>
-        <button class="btn ghost" style="color:#fb7185" onclick="if(confirm('Reset everything to sample data? Your changes will be lost.')){cats=DEFAULT_CATEGORIES.slice();accs=DEFAULT_ACCOUNTS.slice();txns=makeSeed(cats,accs);save();render();}">Reset to sample data</button>
+        <button class="btn ghost" onclick="if(confirm('Replace current data with sample data? Your current entries will be lost (unless backed up).')){cats=DEFAULT_CATEGORIES.slice();accs=DEFAULT_ACCOUNTS.slice();txns=makeSeed(cats,accs);save();render();}">Load sample data (demo)</button>
       </div>
     </div>`;
 }
@@ -777,6 +892,9 @@ function renderOverlays() {
   $("overlays").innerHTML = h;
 }
 function runConfirm() { const a = confirmBox && confirmBox.action; confirmBox = null; renderOverlays(); if (a) a(); }
+
+render();
+if (sync && sync.gistId && !locked) setTimeout(() => pullSync(true), 1000);
 </script>
 </body>
 </html>
