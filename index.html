@@ -1,0 +1,734 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="theme-color" content="#020617" />
+<meta name="mobile-web-app-capable" content="yes" />
+<title>Finance Tracker</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%234f46e5'/%3E%3Ctext x='50' y='68' font-size='52' text-anchor='middle'%3E💸%3C/text%3E%3C/svg%3E" />
+<link rel="manifest" href='data:application/manifest+json,{"name":"Finance Tracker","short_name":"FinanceTracker","start_url":".","display":"standalone","background_color":"%23020617","theme_color":"%23020617","icons":[{"src":"data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Crect width=%27100%27 height=%27100%27 rx=%2720%27 fill=%27%234f46e5%27/%3E%3Ctext x=%2750%27 y=%2768%27 font-size=%2752%27 text-anchor=%27middle%27%3E💸%3C/text%3E%3C/svg%3E","sizes":"any","type":"image/svg+xml","purpose":"any"}]}' />
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: Inter, system-ui, sans-serif; background:#020617; color:#f1f5f9; padding-bottom:90px; -webkit-tap-highlight-color: transparent; }
+  .card { background:rgba(15,23,42,.6); border:1px solid #1e293b; border-radius:16px; padding:16px; }
+  .wrap { max-width:620px; margin:0 auto; padding:16px; }
+  .btn { border:none; border-radius:12px; padding:10px 14px; font-size:13px; font-weight:600; cursor:pointer; background:#1e293b; color:#f1f5f9; }
+  .btn.primary { background:#4f46e5; }
+  .btn.danger { background:#e11d48; }
+  .btn.ghost { background:transparent; border:1px solid #334155; color:#cbd5e1; font-weight:400; }
+  .btn:disabled { opacity:.4; cursor:default; }
+  .chip { border:1px solid #334155; background:transparent; color:#cbd5e1; border-radius:999px; padding:7px 12px; font-size:12px; cursor:pointer; }
+  input, select, textarea { background:#1e293b; border:1px solid #334155; color:#f1f5f9; border-radius:12px; padding:9px 12px; font-size:14px; outline:none; font-family:inherit; width:100%; }
+  input:focus, select:focus { border-color:#6366f1; }
+  .row { display:flex; align-items:center; gap:10px; }
+  .nav { position:fixed; bottom:0; left:0; right:0; display:flex; justify-content:space-around; background:rgba(2,6,23,.95); border-top:1px solid #1e293b; padding:8px 0; z-index:10; }
+  .nav button { background:none; border:none; color:#64748b; font-size:10px; display:flex; flex-direction:column; align-items:center; gap:2px; cursor:pointer; padding:4px 14px; border-radius:10px; }
+  .nav button.on { color:#818cf8; }
+  .nav span { font-size:19px; }
+  .overlay { position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:20; display:flex; align-items:center; justify-content:center; padding:16px; }
+  .overlay.bottom { align-items:flex-end; padding:0; }
+  .panel { background:#0f172a; border:1px solid #334155; border-radius:18px; padding:20px; width:100%; max-width:430px; max-height:90vh; overflow-y:auto; }
+  .panel.bottom { border-radius:18px 18px 0 0; }
+  .hidden { display:none !important; }
+  .txn { display:flex; align-items:center; gap:10px; background:rgba(15,23,42,.6); border:1px solid #1e293b; border-radius:12px; padding:10px 12px; margin-bottom:8px; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; }
+  .txn small { color:#64748b; font-size:11px; display:block; }
+  .dots { color:#64748b; cursor:pointer; padding:2px 6px; font-size:18px; }
+  .dots:hover { color:#cbd5e1; }
+  .stat { flex:1; min-width:105px; }
+  .stat b { font-size:19px; display:block; margin-top:2px; }
+  .bar { width:6px; background:#4f46e5; border-radius:4px 4px 0 0; flex:1; }
+  .barwrap { display:flex; align-items:flex-end; gap:2px; height:150px; }
+  .barwrap > div { flex:1; display:flex; flex-direction:column; align-items:center; gap:3px; }
+  .barlabel { font-size:8px; color:#475569; }
+  select.small, input.small { font-size:12px; padding:6px 8px; border-radius:8px; }
+  .legend { display:flex; justify-content:space-between; font-size:12px; padding:3px 0; }
+  h4 { margin:2px 0 10px; font-size:14px; color:#cbd5e1; }
+  .muted { color:#64748b; font-size:11px; line-height:1.5; }
+  .ok { color:#34d399; } .bad { color:#fb7185; } .warn { color:#fbbf24; }
+</style>
+</head>
+<body>
+
+<header id="hdr" class="row" style="position:sticky;top:0;z-index:9;background:rgba(2,6,23,.92);backdrop-filter:blur(6px);border-bottom:1px solid #1e293b;padding:10px 16px;justify-content:space-between;">
+  <div class="row" style="gap:8px;">
+    <span style="font-size:20px;">💸</span>
+    <div>
+      <div style="font-weight:700;font-size:15px;">Finance Tracker</div>
+      <select id="monthSel" class="small" style="color:#818cf8;background:transparent;border:none;padding:0;font-size:11px;"></select>
+    </div>
+  </div>
+  <div class="row" style="gap:8px;">
+    <button class="btn ghost" id="lockBtn" style="font-size:12px;padding:7px 12px;">🔒</button>
+    <button class="btn primary" onclick="openAdd()" style="font-size:13px;">+ Add</button>
+  </div>
+</header>
+
+<main class="wrap" id="content"></main>
+
+<nav class="nav" id="nav"></nav>
+
+<div id="overlays"></div>
+<input type="file" id="filePick" accept=".csv,.pdf,text/csv,application/pdf" style="display:none" />
+
+<script>
+"use strict";
+/* ---------- helpers ---------- */
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmt = (n) => "₹" + Number(n).toLocaleString("en-IN", { maximumFractionDigits: 0 });
+const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+const todayStr = () => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
+const monthStr = (d) => d.slice(0, 7);
+const monthLabel = (m) => new Date(m + "-01").toLocaleString("en-IN", { month: "long", year: "numeric" });
+
+function parseCSV(text) {
+  const rows = []; let cur = [], field = "", inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQ) { if (ch === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQ = false; } else field += ch; }
+    else if (ch === '"') inQ = true;
+    else if (ch === ",") { cur.push(field); field = ""; }
+    else if (ch === "\n" || ch === "\r") { if (ch === "\r" && text[i + 1] === "\n") i++; cur.push(field); field = ""; if (cur.length > 1 || cur[0].trim() !== "") rows.push(cur); cur = []; }
+    else field += ch;
+  }
+  cur.push(field); if (cur.length > 1 || cur[0].trim() !== "") rows.push(cur);
+  return rows;
+}
+function parseText(text) {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+  const withCommas = lines.filter((l) => l.includes(",")).length;
+  if (withCommas >= lines.length / 2) return parseCSV(text);
+  return lines.map((l) => l.split(/\s{2,}/).map((f) => f.trim()).filter((f) => f !== ""));
+}
+function parseDateStr(s) {
+  s = String(s || "").trim().split(/[ T]/)[0];
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+  if (m) { let d = m[1], mo = m[2], y = m[3]; if (y.length === 2) y = "20" + y; if (+mo > 12) { const t = d; d = mo; mo = t; } return y + "-" + mo.padStart(2, "0") + "-" + d.padStart(2, "0"); }
+  return null;
+}
+const cleanNum = (s) => { const v = parseFloat(String(s || "").replace(/[₹,\s]/g, "")); return isNaN(v) ? null : v; };
+
+/* ---------- defaults & seed ---------- */
+const DEFAULT_CATEGORIES = [
+  { id: "groceries", name: "Groceries", color: "#22c55e", icon: "🛒" },
+  { id: "food", name: "Food & Dining", color: "#f97316", icon: "🍽️" },
+  { id: "transport", name: "Transport & Fuel", color: "#3b82f6", icon: "🚗" },
+  { id: "bills", name: "Bills & Utilities", color: "#eab308", icon: "💡" },
+  { id: "rent", name: "Rent", color: "#a855f7", icon: "🏠" },
+  { id: "shopping", name: "Shopping", color: "#ec4899", icon: "🛍️" },
+  { id: "health", name: "Health", color: "#ef4444", icon: "💊" },
+  { id: "entertainment", name: "Entertainment", color: "#14b8a6", icon: "🎬" },
+  { id: "subs", name: "Subscriptions", color: "#6366f1", icon: "📺" },
+  { id: "education", name: "Education", color: "#0ea5e9", icon: "📚" },
+  { id: "travel", name: "Travel", color: "#f43f5e", icon: "✈️" },
+  { id: "invest", name: "Investments / SIP", color: "#84cc16", icon: "📈" },
+  { id: "other", name: "Other", color: "#94a3b8", icon: "📦" },
+  { id: "salary", name: "Salary", color: "#10b981", icon: "💰", income: true },
+  { id: "interest", name: "Interest / Cashback", color: "#34d399", icon: "🏦", income: true },
+];
+const DEFAULT_ACCOUNTS = [
+  { id: "gpay", name: "GPay (HDFC)" },
+  { id: "card-hdfc", name: "HDFC Credit Card" },
+  { id: "card-amex", name: "Amex Credit Card" },
+  { id: "bank", name: "SBI Bank" },
+];
+const PALETTE = ["#22c55e","#f97316","#3b82f6","#eab308","#a855f7","#ec4899","#ef4444","#14b8a6","#6366f1","#0ea5e9","#f43f5e","#84cc16","#94a3b8"];
+const ICONS = ["🛒","🍽️","🚗","💡","🏠","🛍️","💊","🎬","📺","📚","✈️","📈","📦","💰","🏦","🎓","🐾","🎁","⚽","☕"];
+
+function makeSeed(cats, accs) {
+  const c = (id) => { const x = cats.find((y) => y.id === id) || {}; return { categoryId: id, catName: x.name || id, catIcon: x.icon || "📦", catColor: x.color || "#94a3b8" }; };
+  const a = (id) => { const x = accs.find((y) => y.id === id) || {}; return { accountId: id, accName: x.name || id }; };
+  const ym = todayStr().slice(0, 7);
+  const mk = (day, amount, cat, acc, payee) => ({ id: uid(), date: ym + "-" + String(day).padStart(2, "0"), amount, type: "expense", payee, note: "", source: "sample", ...c(cat), ...a(acc) });
+  return [
+    { id: uid(), date: ym + "-01", amount: 85000, type: "income", payee: "Employer", note: "", source: "sample", ...c("salary"), ...a("bank") },
+    { id: uid(), date: ym + "-02", amount: 18000, type: "expense", payee: "Landlord", note: "", source: "sample", ...c("rent"), ...a("gpay") },
+    mk(3, 2480, "groceries", "gpay", "BigBasket"), mk(4, 350, "food", "gpay", "Swiggy"), mk(5, 2000, "transport", "gpay", "IndianOil"),
+    { id: uid(), date: ym + "-06", amount: 12500, type: "expense", payee: "Zerodha SIP", note: "", source: "sample", ...c("invest"), ...a("bank") },
+    mk(7, 799, "subs", "card-hdfc", "Netflix"), mk(8, 1180, "shopping", "card-hdfc", "Amazon"), mk(9, 640, "food", "gpay", "Zomato"),
+    mk(10, 1560, "bills", "gpay", "Electricity Bill"), mk(11, 890, "entertainment", "card-hdfc", "BookMyShow"), mk(12, 3100, "groceries", "gpay", "DMart"),
+    mk(13, 420, "transport", "gpay", "Uber"), mk(14, 2450, "shopping", "card-amex", "Myntra"), mk(15, 560, "food", "gpay", "Chai Point"),
+    { id: uid(), date: ym + "-16", amount: 1200, type: "income", payee: "Refund + cashback", note: "", source: "sample", ...c("interest"), ...a("bank") },
+    mk(17, 1350, "health", "gpay", "PharmEasy"), mk(18, 7200, "travel", "card-hdfc", "IRCTC"),
+  ];
+}
+
+/* ---------- state ---------- */
+let txns = [], cats = [], accs = [];
+let view = "dashboard", month = monthStr(todayStr());
+let editingId = null, menu = null, menuGuard = 0, pressTimer = null;
+let pendingDelete = null, confirmBox = null, editorBox = null, showTrashFlag = false;
+let imp = null; // {step, rows, name, hasHeader, map:{date,payee,amount,sign,debit,credit,category}, msg}
+let pinHash = null, locked = false;
+let panelBox = null;
+function openPanel(html) { panelBox = html; renderOverlays(); }
+function closePanel() { panelBox = null; renderOverlays(); }
+
+function save() { try { localStorage.setItem("fty", JSON.stringify({ txns, cats, accs, pinHash })); } catch (e) {} }
+function loadAll() {
+  try {
+    const d = JSON.parse(localStorage.getItem("fty") || "null");
+    if (d && d.cats && d.cats.length) { txns = d.txns || []; cats = d.cats; accs = d.accs || DEFAULT_ACCOUNTS; pinHash = d.pinHash || null; return; }
+  } catch (e) {}
+  cats = DEFAULT_CATEGORIES.slice(); accs = DEFAULT_ACCOUNTS.slice(); txns = makeSeed(cats, accs); save();
+}
+loadAll();
+// purge trash older than 7 days
+(function purge() {
+  const cutoff = Date.now() - 7 * 86400000;
+  const keep = txns.filter((t) => !t.deletedAt || new Date(t.deletedAt).getTime() > cutoff);
+  if (keep.length !== txns.length) { txns = keep; save(); }
+})();
+
+const catById = () => Object.fromEntries(cats.map((c) => [c.id, c]));
+const accById = () => Object.fromEntries(accs.map((a) => [a.id, a]));
+const catSnap = (id) => { const c = catById()[id] || {}; return { categoryId: id, catName: c.name || id, catIcon: c.icon || "📦", catColor: c.color || "#94a3b8" }; };
+const accSnap = (id) => { const a = accById()[id] || {}; return { accountId: id, accName: a.name || id }; };
+const usageCount = (kind, id) => txns.filter((t) => (kind === "cat" ? t.categoryId === id : t.accountId === id)).length;
+const trash = () => txns.filter((t) => t.deletedAt).sort((a, b) => (b.deletedAt || "").localeCompare(a.deletedAt || ""));
+const daysLeft = (t) => Math.max(0, Math.ceil(7 - (Date.now() - new Date(t.deletedAt).getTime()) / 86400000));
+
+/* ---------- lock ---------- */
+async function sha(s) { const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)); return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join(""); }
+function tryLock() {
+  if (pinHash) { locked = true; render(); }
+  else { openPanel('<h3 style="margin-top:0">Set a PIN</h3><input id="pinNew" type="password" inputmode="numeric" maxlength="6" placeholder="Choose a PIN (4-6 digits)" /><div style="height:8px"></div><button class="btn primary" style="width:100%" onclick="savePin()">Save PIN</button><button class="btn" style="width:100%;margin-top:8px" onclick="closePanel()">Not now</button><p class="muted">Your data is protected by this PIN on this device. Do not lose it: a forgotten PIN cannot be recovered (use backup &amp; restore).</p>'); }
+}
+async function savePin() {
+  const v = $("pinNew").value; if (v.length < 4) { alert("PIN must be at least 4 digits."); return; }
+  pinHash = await sha(v); save(); closePanel(); render();
+}
+async function unlock() {
+  const v = $("pinEntry").value;
+  if (await sha(v) === pinHash) { locked = false; render(); }
+  else { $("pinErr").textContent = "Wrong PIN. Try again."; $("pinEntry").value = ""; }
+}
+
+/* ---------- form ---------- */
+let form = { date: todayStr(), amount: "", type: "expense", category: "food", account: "gpay", payee: "", note: "" };
+function openAdd(id) {
+  editingId = id || null;
+  if (id) {
+    const t = txns.find((x) => x.id === id);
+    form = { date: t.date, amount: String(t.amount), type: t.type, category: t.categoryId, account: t.accountId, payee: t.payee || "", note: t.note || "" };
+  } else {
+    form = { date: todayStr(), amount: "", type: "expense", category: "food", account: accs[0] ? accs[0].id : "gpay", payee: "", note: "" };
+  }
+  renderAddSheet();
+}
+function saveTxn() {
+  const f = {
+    date: $("fDate").value, amount: parseFloat($("fAmount").value), type: form.type,
+    category: form.category, account: $("fAccount").value, payee: $("fPayee").value.trim(), note: $("fNote").value.trim(),
+  };
+  if (!f.amount || f.amount <= 0) { $("fErr").textContent = "Enter an amount."; return; }
+  if (!catById()[f.category] || !accById()[f.account]) { $("fErr").textContent = "That category/account no longer exists — pick another."; return; }
+  if (editingId) {
+    txns = txns.map((t) => (t.id === editingId ? { ...t, ...f, ...catSnap(f.category), ...accSnap(f.account), removed: false } : t));
+  } else {
+    txns.push({ id: uid(), source: "manual", ...f, ...catSnap(f.category), ...accSnap(f.account) });
+  }
+  save(); closePanel(); render();
+}
+
+/* ---------- delete / trash ---------- */
+function askDelete(id) { pendingDelete = txns.find((t) => t.id === id); closeMenu(); renderOverlays(); }
+function moveToTrash() {
+  txns = txns.map((t) => (t.id === pendingDelete.id ? { ...t, deletedAt: new Date().toISOString() } : t));
+  save(); pendingDelete = null; closeMenu(); render();
+}
+function restoreTxn(id) { txns = txns.map((t) => (t.id === id ? (({ deletedAt, ...r }) => r)(t) : t)); save(); render(); }
+function permDelete(id) { txns = txns.filter((t) => t.id !== id); save(); render(); }
+
+/* ---------- context menu ---------- */
+function openMenu(id, x, y) {
+  if (Date.now() < menuGuard) return;
+  menuGuard = Date.now() + 500;
+  const t = txns.find((z) => z.id === id); if (!t) return;
+  const s = window.getSelection && getSelection(); if (s && s.rangeCount > 0) s.removeAllRanges();
+  menu = { id, x: Math.min(x, innerWidth - 150), y: Math.min(y, innerHeight - 140) };
+  document.addEventListener("selectionchange", clearSel);
+  renderOverlays();
+}
+function clearSel() { const s = window.getSelection && getSelection(); if (s && s.rangeCount > 0) s.removeAllRanges(); }
+function closeMenu() { if (menu) { menu = null; document.removeEventListener("selectionchange", clearSel); renderOverlays(); } }
+function touchStart(e, id) {
+  const t0 = e.touches[0];
+  pressTimer = setTimeout(() => openMenu(id, t0.clientX, t0.clientY), 450);
+}
+function touchEnd() { if (pressTimer) { clearTimeout(pressTimer); } }
+
+/* ---------- categories / accounts manage ---------- */
+function openCatEditor(kind, mode, id) {
+  editorBox = { kind, mode, id };
+  if (mode === "add") editorBox.draft = kind === "cat" ? { name: "", icon: "📦", color: PALETTE[0] } : { name: "" };
+  else { const it = (kind === "cat" ? cats : accs).find((x) => x.id === id); editorBox.draft = { name: it.name, icon: it.icon, color: it.color }; }
+  renderOverlays();
+}
+function stepCatEditor() {
+  const eb = editorBox;
+  if (!eb.draft.name || !eb.draft.name.trim()) { alert("Enter a name."); return; }
+  if (eb.mode === "add") {
+    if (eb.kind === "cat") cats.push({ id: uid(), ...eb.draft });
+    else accs.push({ id: uid(), name: eb.draft.name });
+    save(); editorBox = null; render(); return;
+  }
+  const it = (eb.kind === "cat" ? cats : accs).find((x) => x.id === eb.id);
+  const n = usageCount(eb.kind, eb.id);
+  const label = eb.kind === "cat" ? "category" : "account";
+  let title = "Edit " + label, body, cta, danger = false;
+  if (n === 0) { body = `"${it.name}" is not used by any transaction. It will simply be updated.`; cta = "Save"; }
+  else {
+    body = `You are editing the ${label} "${it.name}". This will also update ${n} past transaction${n === 1 ? "" : "s"} that use it: their displayed ${label} name${n === 1 ? "" : "s"}${eb.kind === "cat" ? ", icon and colour" : ""} will change everywhere (amounts and dates are untouched). If you only want some past entries changed, do not confirm — instead edit those transactions individually.`;
+    cta = `Save and update ${n} transaction${n === 1 ? "" : "s"}`;
+  }
+  editorBox = null;
+  confirmBox = { title, body, cta, danger, action: () => {
+    if (eb.kind === "cat") { cats = cats.map((c) => (c.id === eb.id ? { ...c, ...eb.draft } : c)); txns = txns.map((t) => (t.categoryId === eb.id ? { ...t, catName: eb.draft.name, catIcon: eb.draft.icon, catColor: eb.draft.color } : t)); }
+    else { accs = accs.map((a) => (a.id === eb.id ? { ...a, name: eb.draft.name } : a)); txns = txns.map((t) => (t.accountId === eb.id ? { ...t, accName: eb.draft.name } : t)); }
+    save(); render();
+  } };
+  renderOverlays();
+}
+function askDeleteCA(kind, id) {
+  const it = (kind === "cat" ? cats : accs).find((x) => x.id === id);
+  const n = usageCount(kind, id);
+  const label = kind === "cat" ? "category" : "account";
+  let body = `You are deleting the ${label} "${it.name}". Past transactions will NOT be affected: the ${n} entr${n === 1 ? "y" : "ies"} recorded under it keep their saved name, icon and colour, and your totals stay exactly the same (they will be marked "removed" in lists). You also won't be able to pick it for future entries. Amounts are never deleted by removing a ${label}.`;
+  confirmBox = { title: "Delete " + label, body, cta: `Delete "${it.name}"`, danger: true,
+    action: () => { if (kind === "cat") cats = cats.filter((c) => c.id !== id); else accs = accs.filter((a) => a.id !== id); save(); render(); } };
+  renderOverlays();
+}
+
+/* ---------- import ---------- */
+const DEMO_STATEMENT = () => { const ym = todayStr().slice(0, 7); return `Date,Particulars,Withdrawal,Deposit\n${ym}-19,SWIGGY BANGALORE,640.00,\n${ym}-20,BLUE TOKAI COFFEE,480.00,\n${ym}-20,SALARY CREDIT,,85000.00\n${ym}-21,JIO RECHARGE,349.00,`; };
+function importPick() { $("filePick").click(); }
+$("filePick").onchange = (e) => {
+  const f = e.target.files && e.target.files[0]; e.target.value = "";
+  if (!f) return;
+  if (/\.pdf$/i.test(f.name) || f.type === "application/pdf") return importPdf(f);
+  const r = new FileReader();
+  r.onload = (ev) => startMap(String(ev.target.result || ""), f.name);
+  r.readAsText(f);
+};
+function importPdf(f) {
+  const r = new FileReader();
+  r.onload = (ev) => {
+    try {
+      const bytes = new Uint8Array(ev.target.result);
+      let raw = ""; for (let i = 0; i < bytes.length; i++) raw += String.fromCharCode(bytes[i]);
+      if (raw.includes("FlateDecode")) { imp = imp || {}; imp.step = "idle"; alert("This PDF stores its text compressed, which this version can't decode yet.\n\nWorkaround: open the PDF, select the transaction table (including the header row), copy, and paste it into the paste box in the Import tab."); render(); return; }
+      const texts = [...raw.matchAll(/\(((?:\\.|[^\\()])*)\)\s*T[jJ]/g)].map((m) => m[1].replace(/\\([()\\])/g, "$1"));
+      const text = texts.join("\n");
+      if (text.trim().length > 10) startMap(text, f.name);
+      else { alert("Could not extract text from this PDF. Select its transaction table, copy, and paste into the Import tab's paste box."); }
+    } catch (err) { alert("Could not read this PDF. Select its transaction table, copy, and paste into the Import tab's paste box."); }
+  };
+  r.readAsArrayBuffer(f);
+}
+function importPaste() {
+  const t = $("pasteBox").value;
+  if (!t.trim()) { alert("Paste your statement rows first."); return; }
+  startMap(t, "pasted statement");
+}
+function startMap(text, name) {
+  const rows = parseText(text);
+  if (!rows.length) { alert("Could not read this as CSV or table text."); return; }
+  imp = { step: "map", rows, name, hasHeader: true, map: {}, msg: "" };
+  view = "import"; render(); guessMap();
+}
+function guessMap() {
+  if (!imp || !imp.rows.length) return;
+  const heads = (imp.hasHeader ? imp.rows[0] : []).map((h) => String(h || "").toLowerCase());
+  const find = (...words) => heads.findIndex((h) => words.some((w) => h.includes(w)));
+  const m = { date: find("date"), payee: find("particular", "narration", "description", "payee", "merchant", "details", "remark"), debit: find("withdraw", "debit", "paid out"), credit: find("deposit", "credit", "paid in"), amount: find("amount", "value"), sign: -1, category: -1 };
+  if (m.amount < 0 && m.debit < 0 && m.credit < 0) m.amount = 1;
+  if (m.payee < 0) m.payee = 2;
+  imp.map = m; render();
+}
+function doImport() {
+  const body = imp.rows.slice(imp.hasHeader ? 1 : 0);
+  const batchId = uid();
+  const created = []; let skipped = 0;
+  const others = txns.filter((t) => !t.deletedAt);
+  body.forEach((r) => {
+    const date = parseDateStr(r[imp.map.date]);
+    let amount, type;
+    if (imp.map.debit >= 0 || imp.map.credit >= 0) {
+      const d = cleanNum(r[imp.map.debit]), c = cleanNum(r[imp.map.credit]);
+      if (d > 0) { amount = d; type = "expense"; } else if (c > 0) { amount = c; type = "income"; } else amount = null;
+    } else {
+      amount = cleanNum(r[imp.map.amount]);
+      if (amount === null) { skipped++; return; }
+      type = imp.map.sign >= 0 ? (amount < 0 ? "expense" : "income") : "expense";
+      amount = Math.abs(amount);
+    }
+    if (!date || !amount || amount <= 0) { skipped++; return; }
+    const payee = String(r[imp.map.payee] || "Unknown").trim() || "Unknown";
+    if (others.some((t) => t.source === "statement" && t.date === date && t.amount === amount && t.payee === payee)) { skipped++; return; }
+    const pl = payee.toLowerCase();
+    const guess = imp.map.category >= 0 && catById()[r[imp.map.category]] ? r[imp.map.category]
+      : /(swiggy|zomato|restaurant|hotel|cafe|coffee|domino|pizza|kfc|starbucks|tea)/.test(pl) ? "food"
+      : /(bigbasket|dmart|grocer|blinkit|zepto|instamart|store|mart|super)/.test(pl) ? "groceries"
+      : /(uber|ola|petrol|fuel|indianoil|metro|irctc|indigo|air)/.test(pl) ? "transport"
+      : /(electric|bill|recharge|airtel|jio|vodafone|bescom|gas|water)/.test(pl) ? "bills"
+      : /(amazon|flipkart|myntra|ajio|shop)/.test(pl) ? "shopping"
+      : /(netflix|prime|spotify|hotstar|bookmyshow|movie|pvr)/.test(pl) ? "subs"
+      : /(pharm|hospital|clinic|doctor|med)/.test(pl) ? "health" : "other";
+    const match = others.find((t) => !t.matchedWith && !t.deletedAt && t.amount === amount && t.type === type && t.date === date);
+    created.push({ id: uid(), date, amount, type, payee, note: "", source: "statement", matchedWith: match ? match.id : null, guessed: true, ...catSnap(guess), ...accSnap(accs[0] ? accs[0].id : "gpay") });
+  });
+  if (created.length) {
+    created.forEach((c2) => { if (c2.matchedWith) { const i = txns.findIndex((x) => x.id === c2.matchedWith); if (i >= 0) txns[i] = { ...txns[i], matchedWith: c2.id }; } });
+    txns = txns.concat(created);
+  }
+  const matched = created.filter((c2) => c2.matchedWith).length;
+  imp.step = "done";
+  imp.msg = `Imported ${created.length} entries from "${imp.name}"${skipped ? `, ${skipped} skipped (invalid or duplicate)` : ""}. ${matched} auto-matched. ${created.length - matched} need review below.`;
+  if (created.length) month = monthStr(created.map((c2) => c2.date).sort().reverse()[0]);
+  save(); render();
+}
+function matchPair(stId, manId) {
+  txns = txns.map((t) => (t.id === stId ? { ...t, matchedWith: manId } : t.id === manId ? { ...t, matchedWith: stId } : t));
+  save(); render();
+}
+
+/* ---------- backup ---------- */
+function backupData() {
+  const blob = new Blob([JSON.stringify({ app: "finance-tracker", version: 1, exportedAt: new Date().toISOString(), txns, cats, accs }, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "finance-tracker-backup-" + todayStr() + ".json";
+  a.click(); URL.revokeObjectURL(a.href);
+}
+function restorePick() { const inp = document.createElement("input"); inp.type = "file"; inp.accept = ".json,application/json";
+  inp.onchange = () => {
+    const f = inp.files[0]; if (!f) return;
+    const r = new FileReader();
+    r.onload = (ev) => {
+      try {
+        const d = JSON.parse(ev.target.result);
+        if (!d.txns) throw 0;
+        txns = d.txns; if (d.cats && d.cats.length) cats = d.cats; if (d.accs && d.accs.length) accs = d.accs;
+        save(); render(); alert("Backup restored: " + txns.length + " entries.");
+      } catch (e) { alert("That file is not a valid Finance Tracker backup."); }
+    };
+    r.readAsText(f);
+  };
+  inp.click();
+}
+
+/* ---------- rendering ---------- */
+const NAV = [ ["dashboard","📊","Dashboard"], ["txns","🧾","Entries"], ["import","📥","Import"], ["settings","⚙️","Settings"] ];
+
+function render() {
+  $("nav").innerHTML = NAV.map(([id, ic, lb]) =>
+    `<button class="${view === id ? "on" : ""}" onclick="view='${id}';render()"><span>${ic}</span>${lb}</button>`).join("");
+  $("lockBtn").textContent = pinHash ? "🔒" : "🔑";
+  $("lockBtn").onclick = tryLock;
+  // month selector
+  const months = [...new Set(txns.map((t) => monthStr(t.date)))].sort().reverse();
+  if (!months.includes(month)) months.unshift(month);
+  const ms = $("monthSel");
+  ms.innerHTML = months.map((m) => `<option value="${m}" ${m === month ? "selected" : ""}>${monthLabel(m)}</option>`).join("");
+  ms.onchange = () => { month = ms.value; render(); };
+  if (locked) { renderLocked(); return; }
+  if (view === "dashboard") renderDash();
+  else if (view === "txns") renderTxns();
+  else if (view === "import") renderImport();
+  else renderSettings();
+  renderOverlays();
+}
+
+function activeMonth() { return txns.filter((t) => monthStr(t.date) === month && !t.deletedAt); }
+function effectiveMonth() { return activeMonth().filter((t) => !(t.source === "statement" && t.matchedWith)); }
+
+function renderDash() {
+  const list = effectiveMonth();
+  const income = list.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
+  const spend = list.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
+  const byCat = {};
+  list.filter((t) => t.type === "expense").forEach((t) => { const k = t.categoryId; byCat[k] = byCat[k] || { amount: 0, catName: t.catName, catColor: t.catColor }; byCat[k].amount += t.amount; });
+  const cs = Object.entries(byCat).map(([id, v]) => ({ id, ...v })).sort((a, b) => b.amount - a.amount);
+  let grad = 0, stops = [];
+  cs.forEach((c) => { const pct = (c.amount / (spend || 1)) * 100; stops.push(`${c.catColor} ${grad}% ${grad + pct}%`); grad += pct; });
+  const dim = new Date(parseInt(month.slice(0, 4)), parseInt(month.slice(5, 7)), 0).getDate();
+  const daily = Array.from({ length: dim }, () => 0);
+  list.filter((t) => t.type === "expense").forEach((t) => daily[parseInt(t.date.slice(8)) - 1] += t.amount);
+  const dm = Math.max(...daily, 1);
+  const merch = {};
+  list.filter((t) => t.type === "expense").forEach((t) => { const k = t.payee || "Unknown"; merch[k] = (merch[k] || 0) + t.amount; });
+  const top = Object.entries(merch).map(([payee, amount]) => ({ payee, amount })).sort((a, b) => b.amount - a.amount).slice(0, 5);
+  $("content").innerHTML = `
+    <div class="row" style="flex-wrap:wrap;gap:10px;margin-bottom:14px;">
+      <div class="card stat"><span class="muted">INCOME</span><b class="ok">${fmt(income)}</b></div>
+      <div class="card stat"><span class="muted">SPENDING</span><b class="bad">${fmt(spend)}</b></div>
+      <div class="card stat"><span class="muted">NET</span><b style="color:${income - spend >= 0 ? "#38bdf8" : "#fb7185"}">${fmt(income - spend)}</b></div>
+      <div class="card stat"><span class="muted">ENTRIES</span><b>${activeMonth().length}</b></div>
+    </div>
+    <div class="card" style="margin-bottom:14px;">
+      <h4>By category</h4>
+      <div class="row" style="gap:18px;align-items:flex-start;">
+        ${cs.length ? `<div style="width:130px;height:130px;border-radius:50%;flex-shrink:0;background:conic-gradient(${stops.join(",")});position:relative;"><div style="position:absolute;inset:26px;border-radius:50%;background:#0f172a;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;">${fmt(spend)}</div></div>
+        <div style="flex:1;min-width:140px;">
+          ${cs.slice(0, 7).map((c) => `<div class="legend"><span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${c.catColor};margin-right:6px;"></span>${esc(c.catName)}${catById()[c.id] ? "" : ' <span class="muted">(removed)</span>'}</span><span class="muted">${fmt(c.amount)} · ${Math.round((c.amount / (spend || 1)) * 100)}%</span></div>`).join("")}
+        </div>` : `<p class="muted">No spending recorded this month.</p>`}
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:14px;">
+      <h4>Daily spending</h4>
+      <div class="barwrap">${daily.map((v, i) => `<div><div class="bar" style="height:${Math.round((v / dm) * 130)}px;opacity:${v ? 1 : 0.25}"></div><span class="barlabel">${(i + 1) % 5 === 0 || i === 0 ? i + 1 : "·"}</span></div>`).join("")}</div>
+    </div>
+    <div class="card">
+      <h4>Top merchants</h4>
+      ${top.length ? top.map((m, i) => `<div class="legend"><span><span class="muted">${i + 1}.</span> ${esc(m.payee)}</span><span class="bad">-${fmt(m.amount)}</span></div>`).join("") : '<p class="muted">Nothing yet.</p>'}
+    </div>`;
+}
+
+function txnRow(t, inTrash) {
+  const removed1 = catById()[t.categoryId] ? "" : " (removed)", removed2 = accById()[t.accountId] ? "" : " (removed)";
+  const src = t.source === "manual" ? "✍️ manual" : t.source === "statement" ? "🧾 statement" : "sample";
+  const meta = `${t.date} · ${esc(t.catName)}${removed1} · ${esc(t.accName)}${removed2} · ${src}${t.matchedWith ? ' · <span class="ok">✅ verified</span>' : ""}`;
+  return `<div class="txn" ontouchstart="touchStart(event,'${t.id}')" ontouchend="touchEnd()" ontouchmove="touchEnd()"
+      oncontextmenu="event.preventDefault();touchEnd();openMenu('${t.id}',event.clientX,event.clientY)">
+    <div style="width:36px;height:36px;border-radius:50%;background:${t.catColor || "#94a3b8"}22;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${t.catIcon || "📦"}</div>
+    <div style="flex:1;min-width:0;">
+      <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(t.payee || t.catName)}</div>
+      <small>${meta}</small>
+    </div>
+    <div style="font-weight:700;font-size:13px;${t.type === "income" ? "color:#34d399" : "color:#fb7185"}">${t.type === "income" ? "+" : "-"}${fmt(t.amount)}</div>
+    ${inTrash
+      ? `<small class="warn" style="white-space:nowrap">${daysLeft(t)}d left</small><button class="btn ghost" style="padding:5px 9px;font-size:11px" onclick="restoreTxn('${t.id}')">Restore</button><button class="btn ghost" style="padding:5px 9px;font-size:11px;color:#fb7185" onclick="if(confirm('Delete permanently? This cannot be undone.'))permDelete('${t.id}')">Delete</button>`
+      : `<span class="dots" onclick="event.stopPropagation();const r=this.getBoundingClientRect();openMenu('${t.id}',Math.max(8,r.left-135),r.bottom+6);">⋯</span>`}
+  </div>`;
+}
+
+function renderTxns() {
+  const list = activeMonth().sort((a, b) => b.date.localeCompare(a.date));
+  const tr = trash();
+  $("content").innerHTML = `
+    <div class="row" style="justify-content:space-between;margin-bottom:10px;">
+      <span class="muted">👆 Hold an entry (or right-click / tap ⋯) for Edit / Delete</span>
+      <button class="btn ghost" style="font-size:11px" onclick="showTrashFlag=true;renderOverlays()">🗑️ Trash${tr.length ? ` <b class="warn">(${tr.length})</b>` : ""}</button>
+    </div>
+    ${list.length ? list.map((t) => txnRow(t, false)).join("") : '<p class="muted" style="text-align:center;padding:30px 0">No transactions this month. Tap + Add.</p>'}`;
+}
+
+function renderImport() {
+  imp = imp || { step: "idle", msg: "", rows: [], map: {}, name: "", hasHeader: true };
+  const pending = txns.filter((t) => !t.deletedAt && t.source === "statement" && !t.matchedWith);
+  const heads = imp.rows.length && imp.step === "map" ? imp.rows[0] : [];
+  const sel = (key, label) => `<div><div class="muted">${label}</div><select class="small" onchange="imp.map.${key}=parseInt(this.value);render()">
+    <option value="-1">— none —</option>
+    ${heads.map((h, i) => `<option value="${i}" ${imp.map[key] === i ? "selected" : ""}>${i}: ${esc(String(h).slice(0, 18))}</option>`).join("")}
+  </select></div>`;
+  const canImport = imp.step === "map" && imp.map.date >= 0 && (imp.map.amount >= 0 || imp.map.debit >= 0 || imp.map.credit >= 0);
+  $("content").innerHTML = `
+    <div class="card" style="margin-bottom:14px;">
+      <h4>📥 Import a statement (CSV or PDF)</h4>
+      <p class="muted" style="margin:0 0 10px">CSV files import directly. For PDFs: try the file first — if it's compressed (most bank PDFs), open the PDF, select the transaction table, copy, and paste below.</p>
+      <div class="row" style="flex-wrap:wrap;gap:8px;">
+        <button class="btn primary" onclick="importPick()">📄 Choose CSV / PDF file</button>
+        <button class="btn ghost" onclick="startMap(DEMO_STATEMENT(),'demo-statement.csv')">🧪 Load demo statement</button>
+      </div>
+      <textarea id="pasteBox" rows="4" style="margin-top:10px;font-size:12px;font-family:monospace" placeholder="…or paste CSV rows / copied PDF table here:&#10;Date,Particulars,Withdrawal,Deposit&#10;21/11/2026,SWIGGY,640.00,"></textarea>
+      <div style="height:8px"></div>
+      <button class="btn" onclick="importPaste()">Import pasted rows</button>
+    </div>
+    ${imp.step === "map" ? `
+    <div class="card" style="margin-bottom:14px;">
+      <h4>Map columns · ${esc(imp.name)}</h4>
+      <label class="row muted" style="margin-bottom:10px;"><input type="checkbox" class="small" style="width:auto" ${imp.hasHeader ? "checked" : ""} onchange="imp.hasHeader=this.checked;guessMap()"> First row is a header</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        ${sel("date", "Date")}${sel("payee", "Payee / merchant")}
+        ${sel("amount", "Amount (single column)")}${sel("sign", "…or signed (neg = spend)")}
+        ${sel("debit", "…or Debit column")}${sel("credit", "…or Credit column")}
+        ${sel("category", "Category (optional)")}
+      </div>
+      <div class="muted" style="margin:10px 0 4px;">Preview</div>
+      <div class="muted" style="font-family:monospace;background:#020617;border:1px solid #1e293b;border-radius:8px;padding:8px;overflow-x:auto;white-space:nowrap;">
+        ${imp.rows.slice(0, 4).map((r) => esc(r.join(" · "))).join("<br>")}
+      </div>
+      <div style="height:10px"></div>
+      <button class="btn primary" style="width:100%" ${canImport ? "" : "disabled"} onclick="doImport()">Import entries</button>
+    </div>` : ""}
+    ${imp.msg ? `<div class="card" style="margin-bottom:14px;border-color:#065f46;color:#6ee7b7;font-size:12px;">${esc(imp.msg)}</div>` : ""}
+    <div class="card">
+      <h4>🔍 Reconciliation queue</h4>
+      <p class="muted" style="margin:0 0 10px">Statement entries waiting to be matched with a manual entry. Matched statement entries don't count twice in your totals.</p>
+      ${pending.length ? pending.map((st) => {
+        const sugg = txns.find((x) => !x.deletedAt && x.source !== "statement" && !x.matchedWith && x.amount === st.amount && x.type === st.type && Math.abs(new Date(x.date) - new Date(st.date)) <= 3 * 86400000);
+        return `<div class="card" style="margin-bottom:10px;padding:12px;">
+          <div class="row"><div style="flex:1;min-width:0;font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(st.payee)}</div>
+          <span style="font-weight:700;font-size:13px;${st.type === "income" ? "color:#34d399" : "color:#fb7185"}">${st.type === "income" ? "+" : "-"}${fmt(st.amount)}</span>
+          <small>${st.date}</small></div>
+          <div style="height:8px"></div>
+          ${sugg ? `<div class="row" style="background:rgba(67,56,202,.3);border:1px solid rgba(99,102,241,.5);border-radius:10px;padding:8px;font-size:11px;">
+            <span style="flex:1">Like your entry: ${esc(sugg.payee || sugg.catName)}, ${sugg.date}, ${fmt(sugg.amount)} <span class="muted">(${esc(sugg.catName)})</span></span>
+            <button class="btn primary" style="padding:6px 12px;font-size:11px" onclick="matchPair('${st.id}','${sugg.id}')">✓ Match</button></div>`
+            : `<div class="warn" style="font-size:11px;">No matching manual entry found. Add the entry manually, then it will appear here to match.</div>`}
+          <div style="height:8px"></div>
+          <button class="btn ghost" style="font-size:11px;color:#fb7185" onclick="if(confirm('Remove this statement entry? (It was never in your totals unless matched.)')){txns=txns.filter(x=>x.id!=='${st.id}');save();render();}">Remove this statement entry</button>
+        </div>`;
+      }).join("") : '<p class="muted" style="text-align:center;padding:10px;">All statement entries are matched. 🎉</p>'}
+    </div>`;
+}
+
+function renderSettings() {
+  $("content").innerHTML = `
+    <div class="card" style="margin-bottom:14px;">
+      <h4>🔐 Security</h4>
+      <p class="muted">${pinHash ? "App lock is on, backed by this device's browser storage. Tap 🔒 (top right) to lock." : "No PIN set yet. Tap 🔑 (top right) to set one."}</p>
+      ${pinHash ? '<button class="btn ghost" onclick="if(confirm(\'Remove PIN? Anyone opening this app on this device will see your data.\')){pinHash=null;save();render();}">Remove PIN</button>' : ""}
+      <p class="muted" style="margin-top:8px">Encryption at rest of the whole database is the next security upgrade — after your test month.</p>
+    </div>
+    <div class="card" style="margin-bottom:14px;">
+      <div class="row" style="justify-content:space-between;"><h4>📊 Categories (${cats.length})</h4><button class="btn primary" style="font-size:11px;padding:6px 12px" onclick="openCatEditor('cat','add')">+ New</button></div>
+      ${cats.map((c) => { const n = usageCount("cat", c.id); return `<div class="row" style="padding:6px 0;border-bottom:1px solid rgba(30,41,59,.6);">
+        <span style="width:28px;height:28px;border-radius:50%;background:${c.color}22;display:inline-flex;align-items:center;justify-content:center;">${c.icon}</span>
+        <span style="flex:1;font-size:13px;">${esc(c.name)}${c.income ? ' <small class="ok">income</small>' : ""}</span>
+        <small class="muted">${n}</small>
+        <button class="btn ghost" style="padding:4px 9px;font-size:11px;color:#818cf8" onclick="openCatEditor('cat','edit','${c.id}')">Edit</button>
+        <button class="btn ghost" style="padding:4px 9px;font-size:11px;color:#fb7185" onclick="askDeleteCA('cat','${c.id}')">Delete</button>
+      </div>`; }).join("")}
+      <p class="muted" style="margin-top:8px">Editing updates past entries after your confirmation. Deleting never touches past entries.</p>
+    </div>
+    <div class="card" style="margin-bottom:14px;">
+      <div class="row" style="justify-content:space-between;"><h4>💳 Accounts (${accs.length})</h4><button class="btn primary" style="font-size:11px;padding:6px 12px" onclick="openCatEditor('acc','add')">+ New</button></div>
+      ${accs.map((a) => { const n = usageCount("acc", a.id); return `<div class="row" style="padding:6px 0;border-bottom:1px solid rgba(30,41,59,.6);">
+        <span style="flex:1;font-size:13px;">${esc(a.name)}</span><small class="muted">${n}</small>
+        <button class="btn ghost" style="padding:4px 9px;font-size:11px;color:#818cf8" onclick="openCatEditor('acc','edit','${a.id}')">Edit</button>
+        <button class="btn ghost" style="padding:4px 9px;font-size:11px;color:#fb7185" onclick="askDeleteCA('acc','${a.id}')">Delete</button>
+      </div>`; }).join("")}
+    </div>
+    <div class="card">
+      <h4>Backup &amp; data</h4>
+      <p class="muted">Your data lives only in this browser on this device. Take a backup regularly — especially before clearing browser data.</p>
+      <div class="row" style="flex-wrap:wrap;gap:8px;">
+        <button class="btn primary" onclick="backupData()">⬇️ Download backup (JSON)</button>
+        <button class="btn ghost" onclick="restorePick()">⬆️ Restore backup</button>
+        <button class="btn ghost" style="color:#fb7185" onclick="if(confirm('Reset everything to sample data? Your changes will be lost.')){cats=DEFAULT_CATEGORIES.slice();accs=DEFAULT_ACCOUNTS.slice();txns=makeSeed(cats,accs);save();render();}">Reset to sample data</button>
+      </div>
+    </div>`;
+}
+
+function renderLocked() {
+  $("content").innerHTML = `<div style="max-width:280px;margin:15vh auto;text-align:center;">
+    <div style="font-size:48px;">🔐</div>
+    <h3>Enter PIN to unlock</h3>
+    <input id="pinEntry" type="password" inputmode="numeric" maxlength="6" style="text-align:center;font-size:22px;letter-spacing:.5em" onkeydown="if(event.key==='Enter')unlock()" />
+    <div id="pinErr" class="bad" style="font-size:12px;min-height:18px;margin-top:6px;"></div>
+    <button class="btn primary" style="width:100%;margin-top:6px" onclick="unlock()">Unlock</button>
+  </div>`;
+  renderOverlays();
+  setTimeout(() => { const p = $("pinEntry"); if (p) p.focus(); }, 50);
+}
+
+function syncForm() {
+  if ($("fAmount")) form.amount = $("fAmount").value;
+  if ($("fPayee")) form.payee = $("fPayee").value;
+  if ($("fNote")) form.note = $("fNote").value;
+  if ($("fDate")) form.date = $("fDate").value;
+  if ($("fAccount")) form.account = $("fAccount").value;
+}
+function renderAddSheet() {
+  const list = cats.filter((c) => !!c.income === (form.type === "income"));
+  openPanel(`
+    <div class="row" style="justify-content:space-between;"><h3 style="margin:0">${editingId ? "Edit transaction" : "Add transaction"}</h3><button class="btn ghost" style="padding:4px 10px" onclick="closePanel()">×</button></div>
+    <div class="row" style="gap:8px;margin:12px 0;">
+      <button class="btn" style="flex:1;${form.type === "expense" ? "background:#e11d48" : ""}" onclick="syncForm();form.type='expense';form.category=form.category&&catById()[form.category]&&!catById()[form.category].income?form.category:'food';renderAddSheet()">⬆ Expense</button>
+      <button class="btn" style="flex:1;${form.type === "income" ? "background:#059669" : ""}" onclick="syncForm();form.type='income';form.category=form.category&&catById()[form.category]&&catById()[form.category].income?form.category:'salary';renderAddSheet()">⬇ Income</button>
+    </div>
+    <div class="row" style="gap:8px;">
+      <span style="font-size:26px;color:#64748b;">₹</span>
+      <input id="fAmount" type="number" inputmode="decimal" placeholder="0" value="${esc(form.amount)}" style="font-size:24px;font-weight:800;" />
+    </div>
+    <div style="height:10px"></div>
+    <input id="fPayee" placeholder="Merchant / payee (e.g. Swiggy, salary)" value="${esc(form.payee)}" />
+    <div style="height:10px"></div>
+    <div class="muted" style="margin-bottom:6px;">Category</div>
+    <div class="row" style="flex-wrap:wrap;gap:8px;">${list.map((c) => `<button class="chip" style="${form.category === c.id ? `background:${c.color};border-color:transparent;color:#fff` : ""}" onclick="syncForm();form.category='${c.id}';renderAddSheet()">${c.icon} ${esc(c.name)}</button>`).join("")}</div>
+    <div style="height:12px"></div>
+    <div class="row" style="gap:10px;">
+      <div style="flex:1"><div class="muted" style="margin-bottom:5px;">Account</div><select id="fAccount">${accs.map((a) => `<option value="${a.id}" ${form.account === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></div>
+      <div style="flex:1"><div class="muted" style="margin-bottom:5px;">Date</div><input id="fDate" type="date" value="${form.date}" /></div>
+    </div>
+    <div style="height:10px"></div>
+    <input id="fNote" placeholder="Note (optional)" value="${esc(form.note)}" />
+    <div id="fErr" class="bad" style="font-size:12px;min-height:16px;"></div>
+    <button class="btn primary" style="width:100%;margin-top:6px" onclick="saveTxn()">${editingId ? "Update transaction" : "Save transaction"}</button>
+  `);
+}
+
+function renderOverlays() {
+  let h = "";
+  // context menu
+  if (menu) {
+    const t = txns.find((z) => z.id === menu.id);
+    if (t) h += `<div style="position:fixed;inset:0;z-index:30" onclick="if(Date.now()>${menuGuard + 500})closeMenu()" oncontextmenu="event.preventDefault()">
+      <div style="position:absolute;left:${menu.x}px;top:${menu.y}px;width:150px;background:#1e293b;border:1px solid #475569;border-radius:12px;overflow:hidden;box-shadow:0 15px 40px rgba(0,0,0,.6);font-size:14px;">
+        <div style="padding:8px 12px;font-size:10px;color:#94a3b8;border-bottom:1px solid #334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(t.payee || t.catName)} · ${fmt(t.amount)}</div>
+        <div style="padding:10px 12px;cursor:pointer" onclick="closeMenu();openAdd('${t.id}')">✏️ Edit</div>
+        <div style="padding:10px 12px;cursor:pointer;color:#fb7185" onclick="askDelete('${t.id}')">🗑️ Delete</div>
+      </div></div>`;
+  }
+  // trash sheet
+  if (showTrashFlag) {
+    const tr = trash();
+    h += `<div class="overlay bottom" onclick="showTrashFlag=false;renderOverlays()"><div class="panel bottom" onclick="event.stopPropagation()">
+      <div class="row" style="justify-content:space-between;"><h3 style="margin:0">🗑️ Trash</h3><button class="btn ghost" onclick="showTrashFlag=false;renderOverlays()">×</button></div>
+      <p class="muted">Deleted entries wait here 7 days, then are erased for good.</p>
+      ${tr.length ? tr.map((t) => txnRow(t, true)).join("") : '<p class="muted" style="text-align:center;padding:20px;">Trash is empty.</p>'}
+    </div></div>`;
+  }
+  // delete confirm
+  if (pendingDelete) {
+    const t = pendingDelete;
+    h += `<div class="overlay" style="z-index:40"><div class="panel">
+      <h3 style="margin-top:0">🗑️ Delete this entry?</h3>
+      <p style="font-size:13px;color:#cbd5e1;">"${esc(t.payee || t.catName)}" (${fmt(t.amount)}, ${t.date}) will be moved to Trash. It disappears from your totals immediately, and is kept for <b>7 days</b> — restore it anytime from the Trash in the Entries tab. After 7 days it is erased permanently.</p>
+      <div class="row"><button class="btn" style="flex:1" onclick="pendingDelete=null;renderOverlays()">Cancel</button>
+      <button class="btn danger" style="flex:1" onclick="moveToTrash()">Move to Trash</button></div>
+    </div></div>`;
+  }
+  // cat/account editor
+  if (editorBox) {
+    const eb = editorBox;
+    h += `<div class="overlay" style="z-index:35"><div class="panel">
+      <h3 style="margin-top:0">${eb.mode === "add" ? "New " : "Edit "}${eb.kind === "cat" ? "category" : "account"}</h3>
+      ${eb.mode === "edit" ? '<p class="warn" style="font-size:12px;background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.3);border-radius:8px;padding:8px;">Editing will ask you to confirm before it touches past entries.</p>' : ""}
+      <div class="muted" style="margin-bottom:5px;">Name</div>
+      <input id="edName" value="${esc(eb.draft.name)}" oninput="editorBox.draft.name=this.value" />
+      ${eb.kind === "cat" ? `
+      <div class="muted" style="margin:10px 0 6px;">Icon</div>
+      <div class="row" style="flex-wrap:wrap;gap:6px;">${ICONS.map((ic) => `<button class="chip" style="${eb.draft.icon === ic ? "background:#4f46e5;" : ""}" onclick="editorBox.draft.icon='${ic}';renderOverlays()">${ic}</button>`).join("")}</div>
+      <div class="muted" style="margin:10px 0 6px;">Colour</div>
+      <div class="row" style="flex-wrap:wrap;gap:8px;">${PALETTE.map((p) => `<span onclick="editorBox.draft.color='${p}';renderOverlays()" style="width:26px;height:26px;border-radius:50%;background:${p};cursor:pointer;border:3px solid ${eb.draft.color === p ? "#fff" : "transparent"}"></span>`).join("")}</div>` : ""}
+      <div style="height:14px"></div>
+      <div class="row"><button class="btn" style="flex:1" onclick="editorBox=null;renderOverlays()">Cancel</button>
+      <button class="btn primary" style="flex:1" onclick="stepCatEditor()">${eb.mode === "add" ? "Create" : "Continue"}</button></div>
+    </div></div>`;
+  }
+  // generic confirm
+  if (confirmBox) {
+    const cb = confirmBox;
+    h += `<div class="overlay" style="z-index:40"><div class="panel">
+      <h3 style="margin-top:0">⚠️ ${esc(cb.title)}</h3>
+      <p style="font-size:13.5px;color:#cbd5e1;line-height:1.55;">${esc(cb.body)}</p>
+      <div class="row"><button class="btn" style="flex:1" onclick="confirmBox=null;renderOverlays()">Cancel</button>
+      <button class="btn ${cb.danger ? "danger" : "primary"}" style="flex:1;font-size:12px" onclick="runConfirm()">OK</button></div>
+    </div></div>`;
+  }
+  // generic side panel (add/edit sheet, set PIN)
+  if (panelBox) {
+    h += `<div class="overlay" style="z-index:35" onclick="if(event.target===this)closePanel()"><div class="panel" onclick="event.stopPropagation()">${panelBox}</div></div>`;
+  }
+  $("overlays").innerHTML = h;
+}
+function runConfirm() { const a = confirmBox && confirmBox.action; confirmBox = null; renderOverlays(); if (a) a(); }
+</script>
+</body>
+</html>
