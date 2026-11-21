@@ -7,7 +7,11 @@
 <meta name="mobile-web-app-capable" content="yes" />
 <title>Finance Tracker</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%234f46e5'/%3E%3Ctext x='50' y='68' font-size='52' text-anchor='middle'%3E💸%3C/text%3E%3C/svg%3E" />
-<link rel="manifest" href='data:application/manifest+json,{"name":"Finance Tracker","short_name":"FinanceTracker","start_url":".","display":"standalone","background_color":"%23020617","theme_color":"%23020617","icons":[{"src":"data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Crect width=%27100%27 height=%27100%27 rx=%2720%27 fill=%27%234f46e5%27/%3E%3Ctext x=%2750%27 y=%2768%27 font-size=%2752%27 text-anchor=%27middle%27%3E💸%3C/text%3E%3C/svg%3E","sizes":"any","type":"image/svg+xml","purpose":"any"}]}' />
+<link rel="manifest" href="manifest.webmanifest" />
+<script>
+  // Offline support; safe no-op when sw.js is absent (e.g. in previews)
+  try { if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) addEventListener("load", function () { navigator.serviceWorker.register("sw.js").catch(function () {}); }); } catch (e) {}
+</script>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
