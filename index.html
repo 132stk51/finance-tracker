@@ -767,6 +767,7 @@ function renderSettings() {
   $("content").innerHTML = `
     <div class="card" style="margin-bottom:14px;">
       <h4>🔐 Security</h4>
+      <p class="muted" style="margin-bottom:6px">Build: 2026-11-22 · sheet-fix 3</p>
       <p class="muted">${pinHash ? "App lock is on, backed by this device's browser storage. Tap 🔒 (top right) to lock." : "No PIN set yet. Tap 🔑 (top right) to set one."}</p>
       ${pinHash ? '<button class="btn ghost" onclick="if(confirm(\'Remove PIN? Anyone opening this app on this device will see your data.\')){pinHash=null;save();render();}">Remove PIN</button>' : ""}
       <p class="muted" style="margin-top:8px">Encryption at rest of the whole database is the next security upgrade — after your test month.</p>
@@ -856,10 +857,10 @@ function syncForm() {
 function renderAddSheet() {
   const list = cats.filter((c) => !!c.income === (form.type === "income"));
   openPanel(`
-    <div class="row" style="justify-content:space-between;"><h3 style="margin:0">${editingId ? "Edit transaction" : "Add transaction"}</h3><button class="btn ghost" style="padding:4px 10px" onclick="closePanel()">×</button></div>
+    <div class="row" style="justify-content:space-between;"><h3 style="margin:0">${editingId ? "Edit transaction" : "Add transaction"}</h3><button class="btn ghost" style="padding:4px 10px" data-sheet="close">×</button></div>
     <div class="row" style="gap:8px;margin:12px 0;">
-      <button class="btn" style="flex:1;${form.type === "expense" ? "background:#e11d48" : ""}" onclick="syncForm();form.type='expense';form.category=form.category&&catById()[form.category]&&!catById()[form.category].income?form.category:'food';renderAddSheet()">⬆ Expense</button>
-      <button class="btn" style="flex:1;${form.type === "income" ? "background:#059669" : ""}" onclick="syncForm();form.type='income';form.category=form.category&&catById()[form.category]&&catById()[form.category].income?form.category:'salary';renderAddSheet()">⬇ Income</button>
+      <button class="btn" style="flex:1;${form.type === "expense" ? "background:#e11d48" : ""}" data-sheet="exp">⬆ Expense</button>
+      <button class="btn" style="flex:1;${form.type === "income" ? "background:#059669" : ""}" data-sheet="inc">⬇ Income</button>
     </div>
     <div class="row" style="gap:8px;">
       <span style="font-size:26px;color:#64748b;">₹</span>
@@ -890,7 +891,7 @@ function renderAddSheet() {
     <div style="height:10px"></div>
     <input id="fNote" placeholder="Note (optional)" value="${esc(form.note)}" />
     <div id="fErr" class="bad" style="font-size:12px;min-height:16px;"></div>
-    <button class="btn primary" style="width:100%;margin-top:6px" onclick="saveTxn()">${editingId ? "Update transaction" : "Save transaction"}</button>
+    <button class="btn primary" style="width:100%;margin-top:6px" data-sheet="save">${editingId ? "Update transaction" : "Save transaction"}</button>
   `);
 }
 
@@ -980,14 +981,33 @@ setInterval(() => {
 document.addEventListener("click", (e) => {
   const t = e.target;
   const b = t && t.closest ? t.closest("[data-addchip]") : null;
-  if (!b || !panelBox) return;
-  syncForm();
-  const kind = b.getAttribute("data-addchip"), id = b.getAttribute("data-id");
-  if (kind === "cat") { if (catById()[id]) form.category = id; }
-  else if (kind === "acc") { if (accById()[id]) form.account = id; }
-  else if (kind === "mem") { if ((mems.some ? mems : []).some((m) => m.id === id)) form.member = id; }
-  renderAddSheet();
+  if (b && panelBox) {
+    syncForm();
+    const kind = b.getAttribute("data-addchip"), id = b.getAttribute("data-id");
+    if (kind === "cat") { if (catById()[id]) form.category = id; }
+    else if (kind === "acc") { if (accById()[id]) form.account = id; }
+    else if (kind === "mem") { if ((mems || []).some((m) => m.id === id)) form.member = id; }
+    renderAddSheet();
+    return;
+  }
+  const sb = t && t.closest ? t.closest("[data-sheet]") : null;
+  if (sb && panelBox) {
+    const a = sb.getAttribute("data-sheet");
+    if (a === "close") return closePanel();
+    syncForm();
+    if (a === "exp") { form.type = "expense"; form.category = form.category && catById()[form.category] && !catById()[form.category].income ? form.category : "food"; }
+    else if (a === "inc") { form.type = "income"; form.category = form.category && catById()[form.category] && catById()[form.category].income ? form.category : "salary"; }
+    else if (a === "save") return saveTxn();
+    renderAddSheet();
+  }
 });
+try {
+  window.addEventListener("error", (e) => {
+    let b = document.getElementById("errToast");
+    if (!b) { b = document.createElement("div"); b.id = "errToast"; b.style.cssText = "position:fixed;left:10px;right:10px;bottom:90px;z-index:99;background:#7f1d1d;color:#fff;font-size:11px;padding:8px 10px;border-radius:10px;font-family:monospace;word-break:break-all;"; document.body.appendChild(b); }
+    b.textContent = "⚠️ " + (e.message || "error") + " @ line " + (e.lineno || "?");
+  });
+} catch (x) {}
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && sync && sync.gistId && !locked && !syncBusy && Date.now() - lastAutoPull > 15000) {
     lastAutoPull = Date.now(); pullSync(true);
