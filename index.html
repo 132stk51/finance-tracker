@@ -236,7 +236,7 @@ function openAdd(id) {
   editingId = id || null;
   if (id) {
     const t = txns.find((x) => x.id === id);
-    form = { date: t.date, amount: String(t.amount), type: t.type, category: t.categoryId, account: t.accountId, payee: t.payee || "", note: t.note || "" };
+    form = { date: t.date, amount: String(t.amount), type: t.type, category: t.categoryId, account: t.accountId, member: t.memberId || memDefault, payee: t.payee || "", note: t.note || "" };
   } else {
     form = { date: todayStr(), amount: "", type: "expense", category: "food", account: accs[0] ? accs[0].id : "gpay", member: memDefault, payee: "", note: "" };
   }
@@ -869,13 +869,13 @@ function renderAddSheet() {
     <input id="fPayee" placeholder="Merchant / payee (e.g. Swiggy, salary)" value="${esc(form.payee)}" />
     <div style="height:10px"></div>
     <div class="muted" style="margin-bottom:6px;">Category</div>
-    <div class="row" style="flex-wrap:wrap;gap:8px;">${list.map((c) => `<button class="chip" style="${form.category === c.id ? `background:${c.color};border-color:transparent;color:#fff` : ""}" onclick="syncForm();form.category='${c.id}';renderAddSheet()">${c.icon} ${esc(c.name)}</button>`).join("")}</div>
+    <div class="row" style="flex-wrap:wrap;gap:8px;">${list.map((c) => `<button class="chip" style="${form.category === c.id ? `background:${c.color};border-color:transparent;color:#fff` : ""}" data-addchip="cat" data-id="${c.id}">${c.icon} ${esc(c.name)}</button>`).join("")}</div>
     <div style="height:12px"></div>
     ${(function () {
       const ownerName = (id) => { const m = (mems || []).find((x) => x.id === id); return m ? m.name : ""; };
       const mine = accs.filter((a) => (a.owner || "") === form.member);
       const others = accs.filter((a) => (a.owner || "") !== form.member);
-      const chip = (a) => `<button class="chip" style="${form.account === a.id ? "background:#4f46e5;color:#fff;border-color:transparent" : ""}" onclick="syncForm();form.account='${a.id}';renderAddSheet()" data-owner="${a.owner || ""}">${esc(a.name)}${a.owner && (a.owner || "") !== form.member ? " <small>· " + esc(ownerName(a.owner)) + "</small>" : ""}</button>`;
+      const chip = (a) => `<button class="chip" style="${form.account === a.id ? "background:#4f46e5;color:#fff;border-color:transparent" : ""}" data-addchip="acc" data-id="${a.id}">${esc(a.name)}${a.owner && (a.owner || "") !== form.member ? " <small>· " + esc(ownerName(a.owner)) + "</small>" : ""}</button>`;
       let hh = '<div class="muted" style="margin-bottom:6px;">Spending channel (whose account it goes from)</div>';
       if (mine.length) hh += `<div class="muted" style="font-size:11px;margin-bottom:5px;">${esc(ownerName(form.member) || "This member")}'s channels</div><div class="row" style="flex-wrap:wrap;gap:8px;">${mine.map(chip).join("")}</div><div style="height:8px"></div>`;
       if (others.length) hh += `${mine.length ? '<div class="muted" style="font-size:11px;margin-bottom:5px;">Other channels</div>' : ""}<div class="row" style="flex-wrap:wrap;gap:8px;">${others.map(chip).join("")}</div>`;
@@ -886,7 +886,7 @@ function renderAddSheet() {
     <input id="fDate" type="date" value="${form.date}" />
     <div style="height:10px"></div>
     <div class="muted" style="margin-bottom:6px;">Spent by</div>
-    <div class="row" style="flex-wrap:wrap;gap:8px;">${mems.map((m) => `<button class="chip" style="${form.member === m.id ? "background:#4f46e5;color:#fff;border-color:transparent" : ""}" onclick="syncForm();form.member='${m.id}';renderAddSheet()">👤 ${esc(m.name)}</button>`).join("")}</div>
+    <div class="row" style="flex-wrap:wrap;gap:8px;">${mems.map((m) => `<button class="chip" style="${form.member === m.id ? "background:#4f46e5;color:#fff;border-color:transparent" : ""}" data-addchip="mem" data-id="${m.id}">👤 ${esc(m.name)}</button>`).join("")}</div>
     <div style="height:10px"></div>
     <input id="fNote" placeholder="Note (optional)" value="${esc(form.note)}" />
     <div id="fErr" class="bad" style="font-size:12px;min-height:16px;"></div>
@@ -977,6 +977,17 @@ setInterval(() => {
     if (document.visibilityState === "visible" || document.hasFocus && document.hasFocus()) { lastAutoPull = Date.now(); pullSync(true); }
   }
 }, 60000);
+document.addEventListener("click", (e) => {
+  const t = e.target;
+  const b = t && t.closest ? t.closest("[data-addchip]") : null;
+  if (!b || !panelBox) return;
+  syncForm();
+  const kind = b.getAttribute("data-addchip"), id = b.getAttribute("data-id");
+  if (kind === "cat") { if (catById()[id]) form.category = id; }
+  else if (kind === "acc") { if (accById()[id]) form.account = id; }
+  else if (kind === "mem") { if ((mems.some ? mems : []).some((m) => m.id === id)) form.member = id; }
+  renderAddSheet();
+});
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && sync && sync.gistId && !locked && !syncBusy && Date.now() - lastAutoPull > 15000) {
     lastAutoPull = Date.now(); pullSync(true);
