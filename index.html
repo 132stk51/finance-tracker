@@ -137,10 +137,15 @@ const DEFAULT_CATEGORIES = [
   { id: "interest", name: "Interest / Cashback", color: "#34d399", icon: "🏦", income: true },
 ];
 const DEFAULT_ACCOUNTS = [
-  { id: "gpay", name: "GPay (HDFC)" },
-  { id: "card-hdfc", name: "HDFC Credit Card" },
-  { id: "card-amex", name: "Amex Credit Card" },
-  { id: "bank", name: "SBI Bank" },
+  { id: "gpay", name: "GPay (HDFC)", owner: "me" },
+  { id: "card-hdfc", name: "HDFC Credit Card", owner: "me" },
+  { id: "card-amex", name: "Amex Credit Card", owner: "me" },
+  { id: "bank", name: "SBI Bank", owner: "joint" },
+];
+const DEFAULT_MEMBERS = [
+  { id: "me", name: "You" },
+  { id: "wife", name: "Wife" },
+  { id: "joint", name: "Joint" },
 ];
 const PALETTE = ["#22c55e","#f97316","#3b82f6","#eab308","#a855f7","#ec4899","#ef4444","#14b8a6","#6366f1","#0ea5e9","#f43f5e","#84cc16","#94a3b8"];
 const ICONS = ["🛒","🍽️","🚗","💡","🏠","🛍️","💊","🎬","📺","📚","✈️","📈","📦","💰","🏦","🎓","🐾","🎁","⚽","☕"];
@@ -164,7 +169,8 @@ function makeSeed(cats, accs) {
 }
 
 /* ---------- state ---------- */
-let txns = [], cats = [], accs = [];
+let txns = [], cats = [], accs = [], mems = [];
+let memDefault = "me";
 let view = "dashboard", month = monthStr(todayStr());
 let editingId = null, menu = null, menuGuard = 0, pressTimer = null;
 let pendingDelete = null, confirmBox = null, editorBox = null, showTrashFlag = false;
@@ -176,15 +182,20 @@ function openPanel(html) { panelBox = html; renderOverlays(); }
 function closePanel() { panelBox = null; renderOverlays(); }
 
 function save() {
-  try { localStorage.setItem("fty", JSON.stringify({ txns, cats, accs, pinHash })); } catch (e) {}
+  try { localStorage.setItem("fty", JSON.stringify({ txns, cats, accs, mems, pinHash })); } catch (e) {}
+  try { localStorage.setItem("ftyPrefs", JSON.stringify({ memDefault })); } catch (e) {}
   scheduleSync();
 }
 function loadAll() {
   try {
     const d = JSON.parse(localStorage.getItem("fty") || "null");
-    if (d && d.cats && d.cats.length) { txns = d.txns || []; cats = d.cats; accs = d.accs || DEFAULT_ACCOUNTS; pinHash = d.pinHash || null; return; }
-  } catch (e) {}
-  cats = DEFAULT_CATEGORIES.slice(); accs = DEFAULT_ACCOUNTS.slice(); txns = []; save();
+    if (d && d.cats && d.cats.length) {
+      txns = d.txns || []; cats = d.cats; accs = d.accs || DEFAULT_ACCOUNTS; mems = (d.mems && d.mems.length) ? d.mems : DEFAULT_MEMBERS.slice(); pinHash = d.pinHash || null;
+    } else {
+      cats = DEFAULT_CATEGORIES.slice(); accs = DEFAULT_ACCOUNTS.slice(); mems = DEFAULT_MEMBERS.slice(); txns = [];
+    }
+  } catch (e) { cats = DEFAULT_CATEGORIES.slice(); accs = DEFAULT_ACCOUNTS.slice(); mems = DEFAULT_MEMBERS.slice(); txns = []; }
+  try { const p = JSON.parse(localStorage.getItem("ftyPrefs") || "null"); if (p && p.memDefault) memDefault = p.memDefault; } catch (e) {}
 }
 loadAll();
 // purge trash older than 7 days
@@ -198,7 +209,8 @@ const catById = () => Object.fromEntries(cats.map((c) => [c.id, c]));
 const accById = () => Object.fromEntries(accs.map((a) => [a.id, a]));
 const catSnap = (id) => { const c = catById()[id] || {}; return { categoryId: id, catName: c.name || id, catIcon: c.icon || "📦", catColor: c.color || "#94a3b8" }; };
 const accSnap = (id) => { const a = accById()[id] || {}; return { accountId: id, accName: a.name || id }; };
-const usageCount = (kind, id) => txns.filter((t) => (kind === "cat" ? t.categoryId === id : t.accountId === id)).length;
+const memSnap = (id) => { const m = (mems || []).find((x) => x.id === id) || {}; return { memberId: id, memName: m.name || id }; };
+const usageCount = (kind, id) => txns.filter((t) => (kind === "cat" ? t.categoryId === id : kind === "acc" ? t.accountId === id : t.memberId === id)).length;
 const trash = () => txns.filter((t) => t.deletedAt).sort((a, b) => (b.deletedAt || "").localeCompare(a.deletedAt || ""));
 const daysLeft = (t) => Math.max(0, Math.ceil(7 - (Date.now() - new Date(t.deletedAt).getTime()) / 86400000));
 
@@ -219,28 +231,30 @@ async function unlock() {
 }
 
 /* ---------- form ---------- */
-let form = { date: todayStr(), amount: "", type: "expense", category: "food", account: "gpay", payee: "", note: "" };
+let form = { date: todayStr(), amount: "", type: "expense", category: "food", account: "gpay", member: "me", payee: "", note: "" };
 function openAdd(id) {
   editingId = id || null;
   if (id) {
     const t = txns.find((x) => x.id === id);
     form = { date: t.date, amount: String(t.amount), type: t.type, category: t.categoryId, account: t.accountId, payee: t.payee || "", note: t.note || "" };
   } else {
-    form = { date: todayStr(), amount: "", type: "expense", category: "food", account: accs[0] ? accs[0].id : "gpay", payee: "", note: "" };
+    form = { date: todayStr(), amount: "", type: "expense", category: "food", account: accs[0] ? accs[0].id : "gpay", member: memDefault, payee: "", note: "" };
   }
   renderAddSheet();
 }
 function saveTxn() {
   const f = {
     date: $("fDate").value, amount: parseFloat($("fAmount").value), type: form.type,
-    category: form.category, account: $("fAccount").value, payee: $("fPayee").value.trim(), note: $("fNote").value.trim(),
+    category: form.category, account: form.account, member: form.member, payee: $("fPayee").value.trim(), note: $("fNote").value.trim(),
   };
   if (!f.amount || f.amount <= 0) { $("fErr").textContent = "Enter an amount."; return; }
   if (!catById()[f.category] || !accById()[f.account]) { $("fErr").textContent = "That category/account no longer exists — pick another."; return; }
+  memDefault = f.member;
   if (editingId) {
-    txns = txns.map((t) => (t.id === editingId ? { ...t, ...f, ...catSnap(f.category), ...accSnap(f.account), removed: false } : t));
+    txns = txns.map((t) => (t.id === editingId ? { ...t, ...f, ...catSnap(f.category), ...accSnap(f.account), ...memSnap(f.member), removed: false } : t));
+    txns = txns.map((t) => (t.id === editingId && catById()[t.categoryId] ? { ...t, category: t.categoryId } : t));
   } else {
-    txns.push({ id: uid(), source: "manual", ...f, ...catSnap(f.category), ...accSnap(f.account) });
+    txns.push({ id: uid(), source: "manual", ...f, ...catSnap(f.category), ...accSnap(f.account), amount: f.amount, ...memSnap(f.member), removed: false });
   }
   save(); closePanel(); render();
 }
@@ -275,21 +289,22 @@ function touchEnd() { if (pressTimer) { clearTimeout(pressTimer); } }
 /* ---------- categories / accounts manage ---------- */
 function openCatEditor(kind, mode, id) {
   editorBox = { kind, mode, id };
-  if (mode === "add") editorBox.draft = kind === "cat" ? { name: "", icon: "📦", color: PALETTE[0] } : { name: "" };
-  else { const it = (kind === "cat" ? cats : accs).find((x) => x.id === id); editorBox.draft = { name: it.name, icon: it.icon, color: it.color }; }
+  const arr = kind === "cat" ? cats : kind === "acc" ? accs : mems;
+  if (mode === "add") editorBox.draft = kind === "cat" ? { name: "", icon: "📦", color: PALETTE[0] } : kind === "acc" ? { name: "", owner: memDefault } : { name: "" };
+  else { const it = arr.find((x) => x.id === id); editorBox.draft = kind === "acc" ? { name: it.name, owner: it.owner || "" } : { name: it.name, icon: it.icon, color: it.color }; }
   renderOverlays();
 }
 function stepCatEditor() {
   const eb = editorBox;
   if (!eb.draft.name || !eb.draft.name.trim()) { alert("Enter a name."); return; }
+  const arr = eb.kind === "cat" ? cats : eb.kind === "acc" ? accs : mems;
   if (eb.mode === "add") {
-    if (eb.kind === "cat") cats.push({ id: uid(), ...eb.draft });
-    else accs.push({ id: uid(), name: eb.draft.name });
+    arr.push({ id: uid(), ...eb.draft });
     save(); editorBox = null; render(); return;
   }
-  const it = (eb.kind === "cat" ? cats : accs).find((x) => x.id === eb.id);
+  const it = arr.find((x) => x.id === eb.id);
   const n = usageCount(eb.kind, eb.id);
-  const label = eb.kind === "cat" ? "category" : "account";
+  const label = eb.kind === "cat" ? "category" : eb.kind === "acc" ? "account" : "member";
   let title = "Edit " + label, body, cta, danger = false;
   if (n === 0) { body = `"${it.name}" is not used by any transaction. It will simply be updated.`; cta = "Save"; }
   else {
@@ -299,18 +314,19 @@ function stepCatEditor() {
   editorBox = null;
   confirmBox = { title, body, cta, danger, action: () => {
     if (eb.kind === "cat") { cats = cats.map((c) => (c.id === eb.id ? { ...c, ...eb.draft } : c)); txns = txns.map((t) => (t.categoryId === eb.id ? { ...t, catName: eb.draft.name, catIcon: eb.draft.icon, catColor: eb.draft.color } : t)); }
-    else { accs = accs.map((a) => (a.id === eb.id ? { ...a, name: eb.draft.name } : a)); txns = txns.map((t) => (t.accountId === eb.id ? { ...t, accName: eb.draft.name } : t)); }
+    else if (eb.kind === "acc") { const oldOwner = it.owner || ""; accs = accs.map((a) => (a.id === eb.id ? { ...a, ...eb.draft } : a)); if ((eb.draft.owner || "") !== oldOwner || eb.draft.name !== it.name) txns = txns.map((t) => (t.accountId === eb.id ? { ...t, accName: eb.draft.name } : t)); }
+    else { mems = mems.map((m) => (m.id === eb.id ? { ...m, name: eb.draft.name } : m)); txns = txns.map((t) => (t.memberId === eb.id ? { ...t, memName: eb.draft.name } : t)); }
     save(); render();
   } };
   renderOverlays();
 }
 function askDeleteCA(kind, id) {
-  const it = (kind === "cat" ? cats : accs).find((x) => x.id === id);
+  const it = (kind === "cat" ? cats : kind === "acc" ? accs : mems).find((x) => x.id === id);
   const n = usageCount(kind, id);
-  const label = kind === "cat" ? "category" : "account";
-  let body = `You are deleting the ${label} "${it.name}". Past transactions will NOT be affected: the ${n} entr${n === 1 ? "y" : "ies"} recorded under it keep their saved name, icon and colour, and your totals stay exactly the same (they will be marked "removed" in lists). You also won't be able to pick it for future entries. Amounts are never deleted by removing a ${label}.`;
+  const label = kind === "cat" ? "category" : kind === "acc" ? "account" : "member";
+  let body = `You are deleting the ${label} "${it.name}". Past transactions will NOT be affected: the ${n} entr${n === 1 ? "y" : "ies"} recorded under it keep their saved name and remain in all totals. You also won't be able to pick it for future entries. Amounts are never deleted by removing a ${label}.`;
   confirmBox = { title: "Delete " + label, body, cta: `Delete "${it.name}"`, danger: true,
-    action: () => { if (kind === "cat") cats = cats.filter((c) => c.id !== id); else accs = accs.filter((a) => a.id !== id); save(); render(); } };
+    action: () => { if (kind === "cat") cats = cats.filter((c) => c.id !== id); else if (kind === "acc") accs = accs.filter((a) => a.id !== id); else { mems = mems.filter((m) => m.id !== id); if (memDefault === id) memDefault = mems[0] ? mems[0].id : "me"; } save(); render(); } };
   renderOverlays();
 }
 
@@ -443,7 +459,7 @@ async function syncKey() { return crypto.subtle.importKey("raw", b64d(sync.keyB6
 async function packState() {
   const key = await syncKey();
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(JSON.stringify({ txns, cats, accs })));
+  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(JSON.stringify({ txns, cats, accs, mems })));
   return JSON.stringify({ iv: b64e(iv), data: b64e(ct), updatedAt: new Date().toISOString() });
 }
 async function unpackState(content) {
@@ -478,7 +494,7 @@ async function pullSync(silent) {
     if (!f || !f.content) { syncBusy = false; if (!silent) alert("Cloud copy is empty — push first."); return; }
     const { data, updatedAt } = await unpackState(f.content);
     if (updatedAt > (sync.lastSyncAt || "")) {
-      txns = data.txns || []; cats = data.cats || cats; accs = data.accs || accs;
+      txns = data.txns || []; cats = data.cats || cats; accs = data.accs || accs; mems = data.mems || mems;
       try { localStorage.setItem("fty", JSON.stringify({ txns, cats, accs, pinHash })); } catch (e) {}
       sync.lastSyncAt = updatedAt; sync.lastError = null; saveSync(); render();
       if (!silent) alert("Pulled latest data (" + txns.length + " entries).");
@@ -617,16 +633,37 @@ function renderDash() {
       <h4>Daily spending</h4>
       <div class="barwrap">${daily.map((v, i) => `<div><div class="bar" style="height:${Math.round((v / dm) * 130)}px;opacity:${v ? 1 : 0.25}"></div><span class="barlabel">${(i + 1) % 5 === 0 || i === 0 ? i + 1 : "·"}</span></div>`).join("")}</div>
     </div>
-    <div class="card">
+    <div class="card" style="margin-bottom:14px;">
       <h4>Top merchants</h4>
       ${top.length ? top.map((m, i) => `<div class="legend"><span><span class="muted">${i + 1}.</span> ${esc(m.payee)}</span><span class="bad">-${fmt(m.amount)}</span></div>`).join("") : '<p class="muted">Nothing yet.</p>'}
+    </div>
+    <div class="card" style="margin-bottom:14px;">
+      <h4>👤 Who spent what</h4>
+      ${(function () {
+        const byMem = {};
+        list.filter((t) => t.type === "expense").forEach((t) => { const k = t.memberId || (mems[0] ? mems[0].id : "me"); byMem[k] = byMem[k] || { name: t.memName || "", amount: 0 }; byMem[k].amount += t.amount; });
+        const rows = Object.entries(byMem).sort((a, b) => b[1].amount - a[1].amount);
+        if (!rows.length) return '<p class="muted">Nothing yet this month.</p>';
+        const mx = Math.max(...rows.map((r) => r[1].amount), 1);
+        return rows.map(([id, v]) => {
+          const live = mems.find((m) => m.id === id);
+          return `<div class="legend" style="align-items:center;">
+            <span style="flex:1;min-width:0;">${esc(live ? live.name : (v.name || id) + " (removed)")}</span>
+            <span style="flex:2;height:8px;border-radius:4px;background:#1e293b;margin:0 8px;overflow:hidden;"><span style="display:block;height:100%;width:${Math.round((v.amount / mx) * 100)}%;background:${id === "joint" ? "#38bdf8" : "#818cf8"};"></span></span>
+            <span class="bad" style="white-space:nowrap;">${fmt(v.amount)}</span>
+          </div>`;
+        }).join("");
+      })()}
+      <div class="legend" style="border-top:1px solid #1e293b;margin-top:6px;padding-top:6px;">
+        <span style="font-weight:700;">Household total spent</span><span class="bad" style="font-weight:700;">${fmt(spend)}</span>
+      </div>
     </div>`;
 }
 
 function txnRow(t, inTrash) {
   const removed1 = catById()[t.categoryId] ? "" : " (removed)", removed2 = accById()[t.accountId] ? "" : " (removed)";
   const src = t.source === "manual" ? "✍️ manual" : t.source === "statement" ? "🧾 statement" : "sample";
-  const meta = `${t.date} · ${esc(t.catName)}${removed1} · ${esc(t.accName)}${removed2} · ${src}${t.matchedWith ? ' · <span class="ok">✅ verified</span>' : ""}`;
+  const meta = `${t.date} · ${esc(t.catName)}${removed1} · ${esc(t.accName)}${removed2}${t.memName ? " · 👤 " + esc(t.memName) : ""} · ${src}${t.matchedWith ? ' · <span class="ok">✅ verified</span>' : ""}`;
   const selBadge = selMode && !inTrash
     ? `<span onclick="event.stopPropagation();toggleSel('${t.id}')" style="width:22px;height:22px;border-radius:50%;flex-shrink:0;border:2px solid ${selSet.has(t.id) ? "#4f46e5" : "#475569"};background:${selSet.has(t.id) ? "#4f46e5" : "transparent"};color:#fff;font-size:13px;display:inline-flex;align-items:center;justify-content:center;">${selSet.has(t.id) ? "✓" : ""}</span>`
     : "";
@@ -748,10 +785,20 @@ function renderSettings() {
     <div class="card" style="margin-bottom:14px;">
       <div class="row" style="justify-content:space-between;"><h4>💳 Accounts (${accs.length})</h4><button class="btn primary" style="font-size:11px;padding:6px 12px" onclick="openCatEditor('acc','add')">+ New</button></div>
       ${accs.map((a) => { const n = usageCount("acc", a.id); return `<div class="row" style="padding:6px 0;border-bottom:1px solid rgba(30,41,59,.6);">
-        <span style="flex:1;font-size:13px;">${esc(a.name)}</span><small class="muted">${n}</small>
+        <span style="flex:1;font-size:13px;">${esc(a.name)}${a.owner ? (function(){ const m = mems.find((x) => x.id === a.owner); return m ? ` <small class="muted">👤 ${esc(m.name)}</small>` : ""; })() : ""}</span><small class="muted">${n}</small>
         <button class="btn ghost" style="padding:4px 9px;font-size:11px;color:#818cf8" onclick="openCatEditor('acc','edit','${a.id}')">Edit</button>
         <button class="btn ghost" style="padding:4px 9px;font-size:11px;color:#fb7185" onclick="askDeleteCA('acc','${a.id}')">Delete</button>
       </div>`; }).join("")}
+      <p class="muted" style="margin-top:8px">Set each channel's 👤 owner via Edit. In the add sheet, picking "Spent by" brings that member's channels to the front — you can still pay for anyone from any account.</p>
+    </div>
+    <div class="card" style="margin-bottom:14px;">
+      <div class="row" style="justify-content:space-between;"><h4>👤 Members (${mems.length})</h4><button class="btn primary" style="font-size:11px;padding:6px 12px" onclick="openCatEditor('mem','add')">+ New</button></div>
+      ${mems.map((m) => { const n = usageCount("mem", m.id); return `<div class="row" style="padding:6px 0;border-bottom:1px solid rgba(30,41,59,.6);">
+        <span style="flex:1;font-size:13px;">${esc(m.name)}${m.id === memDefault ? ' <small class="ok">default on this device</small>' : ""}</span><small class="muted">${n}</small>
+        <button class="btn ghost" style="padding:4px 9px;font-size:11px;color:#818cf8" onclick="openCatEditor('mem','edit','${m.id}')">Edit</button>
+        <button class="btn ghost" style="padding:4px 9px;font-size:11px;color:#fb7185" onclick="askDeleteCA('mem','${m.id}')">Delete</button>
+      </div>`; }).join("")}
+      <p class="muted" style="margin-top:8px">Members tag who made each payment (You / Wife / Joint). Same rules: editing updates past entries after confirmation, deleting never touches them.</p>
     </div>
     <div class="card" style="margin-bottom:14px;">
       <h4>☁️ Cloud sync (phone ↔ web)</h4>
@@ -824,10 +871,22 @@ function renderAddSheet() {
     <div class="muted" style="margin-bottom:6px;">Category</div>
     <div class="row" style="flex-wrap:wrap;gap:8px;">${list.map((c) => `<button class="chip" style="${form.category === c.id ? `background:${c.color};border-color:transparent;color:#fff` : ""}" onclick="syncForm();form.category='${c.id}';renderAddSheet()">${c.icon} ${esc(c.name)}</button>`).join("")}</div>
     <div style="height:12px"></div>
-    <div class="row" style="gap:10px;">
-      <div style="flex:1"><div class="muted" style="margin-bottom:5px;">Account</div><select id="fAccount">${accs.map((a) => `<option value="${a.id}" ${form.account === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></div>
-      <div style="flex:1"><div class="muted" style="margin-bottom:5px;">Date</div><input id="fDate" type="date" value="${form.date}" /></div>
-    </div>
+    ${(function () {
+      const ownerName = (id) => { const m = (mems || []).find((x) => x.id === id); return m ? m.name : ""; };
+      const mine = accs.filter((a) => (a.owner || "") === form.member);
+      const others = accs.filter((a) => (a.owner || "") !== form.member);
+      const chip = (a) => `<button class="chip" style="${form.account === a.id ? "background:#4f46e5;color:#fff;border-color:transparent" : ""}" onclick="syncForm();form.account='${a.id}';renderAddSheet()" data-owner="${a.owner || ""}">${esc(a.name)}${a.owner && (a.owner || "") !== form.member ? " <small>· " + esc(ownerName(a.owner)) + "</small>" : ""}</button>`;
+      let hh = '<div class="muted" style="margin-bottom:6px;">Spending channel (whose account it goes from)</div>';
+      if (mine.length) hh += `<div class="muted" style="font-size:11px;margin-bottom:5px;">${esc(ownerName(form.member) || "This member")}'s channels</div><div class="row" style="flex-wrap:wrap;gap:8px;">${mine.map(chip).join("")}</div><div style="height:8px"></div>`;
+      if (others.length) hh += `${mine.length ? '<div class="muted" style="font-size:11px;margin-bottom:5px;">Other channels</div>' : ""}<div class="row" style="flex-wrap:wrap;gap:8px;">${others.map(chip).join("")}</div>`;
+      return hh;
+    })()}
+    <div style="height:8px"></div>
+    <div style="display:flex;gap:10px;"><div class="muted" style="font-size:12px;margin-bottom:5px;flex:1;">Date</div></div>
+    <input id="fDate" type="date" value="${form.date}" />
+    <div style="height:10px"></div>
+    <div class="muted" style="margin-bottom:6px;">Spent by</div>
+    <div class="row" style="flex-wrap:wrap;gap:8px;">${mems.map((m) => `<button class="chip" style="${form.member === m.id ? "background:#4f46e5;color:#fff;border-color:transparent" : ""}" onclick="syncForm();form.member='${m.id}';renderAddSheet()">👤 ${esc(m.name)}</button>`).join("")}</div>
     <div style="height:10px"></div>
     <input id="fNote" placeholder="Note (optional)" value="${esc(form.note)}" />
     <div id="fErr" class="bad" style="font-size:12px;min-height:16px;"></div>
@@ -871,10 +930,15 @@ function renderOverlays() {
   if (editorBox) {
     const eb = editorBox;
     h += `<div class="overlay" style="z-index:35"><div class="panel">
-      <h3 style="margin-top:0">${eb.mode === "add" ? "New " : "Edit "}${eb.kind === "cat" ? "category" : "account"}</h3>
-      ${eb.mode === "edit" ? '<p class="warn" style="font-size:12px;background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.3);border-radius:8px;padding:8px;">Editing will ask you to confirm before it touches past entries.</p>' : ""}
+      <h3 style="margin-top:0">${eb.mode === "add" ? "New " : "Edit "}${eb.kind === "cat" ? "category" : eb.kind === "acc" ? "account" : "member"}</h3>
+      ${eb.mode === "edit" && eb.kind !== "mem" ? '<p class="warn" style="font-size:12px;background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.3);border-radius:8px;padding:8px;">Editing will ask you to confirm before it touches past entries.</p>' : ""}
       <div class="muted" style="margin-bottom:5px;">Name</div>
       <input id="edName" value="${esc(eb.draft.name)}" oninput="editorBox.draft.name=this.value" />
+      ${eb.kind === "acc" ? `<div class="muted" style="margin:10px 0 6px;">Owner (whose money this is)</div>
+      <div class="row" style="flex-wrap:wrap;gap:6px;">
+        <button class="chip" style="${!eb.draft.owner ? "background:#4f46e5;" : ""}" onclick="editorBox.draft.owner='';renderOverlays()">— none / shared</button>
+        ${mems.map((m) => `<button class="chip" style="${eb.draft.owner === m.id ? "background:#4f46e5;color:#fff;border-color:transparent" : ""}" onclick="editorBox.draft.owner='${m.id}';renderOverlays()">👤 ${esc(m.name)}</button>`).join("")}
+      </div>` : ""}
       ${eb.kind === "cat" ? `
       <div class="muted" style="margin:10px 0 6px;">Icon</div>
       <div class="row" style="flex-wrap:wrap;gap:6px;">${ICONS.map((ic) => `<button class="chip" style="${eb.draft.icon === ic ? "background:#4f46e5;" : ""}" onclick="editorBox.draft.icon='${ic}';renderOverlays()">${ic}</button>`).join("")}</div>
