@@ -17,6 +17,8 @@
   * { box-sizing: border-box; }
   body { margin:0; font-family: Inter, system-ui, sans-serif; background:#020617; color:#f1f5f9; padding-bottom:90px; -webkit-tap-highlight-color: transparent; }
   .card { background:rgba(15,23,42,.6); border:1px solid #1e293b; border-radius:16px; padding:16px; }
+  #fab { position:fixed; right:18px; bottom:78px; width:58px; height:58px; border-radius:50%; background:#4f46e5; color:#fff; font-size:30px; border:none; box-shadow:0 6px 22px rgba(79,70,229,.55); z-index:11; cursor:pointer; display:flex; align-items:center; justify-content:center; padding:0; }
+  #fab:active { transform:scale(.95); }
   .wrap { max-width:620px; margin:0 auto; padding:16px; }
   .btn { border:none; border-radius:12px; padding:10px 14px; font-size:13px; font-weight:600; cursor:pointer; background:#1e293b; color:#f1f5f9; }
   .btn.primary { background:#4f46e5; }
@@ -65,11 +67,12 @@
   </div>
   <div class="row" style="gap:8px;">
     <button class="btn ghost" id="lockBtn" style="font-size:12px;padding:7px 12px;">🔒</button>
-    <button class="btn primary" onclick="openAdd()" style="font-size:13px;">+ Add</button>
   </div>
 </header>
 
 <main class="wrap" id="content"></main>
+
+<button id="fab" onclick="openAdd()" title="Add transaction">+</button>
 
 <nav class="nav" id="nav"></nav>
 
@@ -547,10 +550,17 @@ function askDeleteMany() {
 
 /* ---------- rendering ---------- */
 const NAV = [ ["dashboard","📊","Dashboard"], ["txns","🧾","Entries"], ["import","📥","Import"], ["settings","⚙️","Settings"] ];
+function go(v) {
+  if (v !== view) { view = v; if (location.hash !== "#" + v) location.hash = v; render(); }
+}
+window.addEventListener("hashchange", function () {
+  const v = location.hash.replace("#", "") || "dashboard";
+  if (v !== view) { view = v; if (view !== "txns") { selMode = false; selSet = new Set(); } render(); }
+});
 
 function render() {
   $("nav").innerHTML = NAV.map(([id, ic, lb]) =>
-    `<button class="${view === id ? "on" : ""}" onclick="view='${id}';render()"><span>${ic}</span>${lb}</button>`).join("");
+    `<button class="${view === id ? "on" : ""}" onclick="go('${id}')"><span>${ic}</span>${lb}</button>`).join("");
   $("lockBtn").textContent = pinHash ? "🔒" : "🔑";
   $("lockBtn").onclick = tryLock;
   // month selector
@@ -894,6 +904,7 @@ function renderOverlays() {
 function runConfirm() { const a = confirmBox && confirmBox.action; confirmBox = null; renderOverlays(); if (a) a(); }
 
 render();
+if (!location.hash) history.replaceState(null, "", "#dashboard");
 if (sync && sync.gistId && !locked) setTimeout(() => pullSync(true), 1000);
 // Keep already-open devices fresh: pull when tab becomes visible and every 60s
 let lastAutoPull = 0;
