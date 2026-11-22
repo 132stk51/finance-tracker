@@ -895,6 +895,18 @@ function runConfirm() { const a = confirmBox && confirmBox.action; confirmBox = 
 
 render();
 if (sync && sync.gistId && !locked) setTimeout(() => pullSync(true), 1000);
+// Keep already-open devices fresh: pull when tab becomes visible and every 60s
+let lastAutoPull = 0;
+setInterval(() => {
+  if (sync && sync.gistId && !locked && !syncBusy && Date.now() - lastAutoPull > 45000) {
+    if (document.visibilityState === "visible" || document.hasFocus && document.hasFocus()) { lastAutoPull = Date.now(); pullSync(true); }
+  }
+}, 60000);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && sync && sync.gistId && !locked && !syncBusy && Date.now() - lastAutoPull > 15000) {
+    lastAutoPull = Date.now(); pullSync(true);
+  }
+});
 </script>
 </body>
 </html>
