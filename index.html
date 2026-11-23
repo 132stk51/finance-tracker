@@ -476,10 +476,13 @@ loadSync();
 const b64e = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
 const b64d = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 async function syncKey() { return crypto.subtle.importKey("raw", b64d(sync.keyB64), "AES-GCM", true, ["encrypt", "decrypt"]); }
-async function packState() {
+async function packState(baseRev) {
   const key = await syncKey();
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const rev = (sync.lastRev || 0) + 1;
+  /* rev is the CLOUD's counter, not this device's: pushes pass the cloud rev
+     they saw (baseRev), so the gist's rev always moves +1 globally no matter
+     which device pushes. Device-local lastRev is only a pull baseline. */
+  const rev = (baseRev != null ? baseRev : (sync.lastRev || 0)) + 1;
   const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(JSON.stringify({ txns, cats, accs, mems, rev })));
   sync._nextRev = rev;
   return JSON.stringify({ iv: b64e(iv), data: b64e(ct), updatedAt: new Date().toISOString() });
@@ -501,7 +504,7 @@ function stateFP(s) {
 function applyPull(data, updatedAt, rIn) {
   txns = data.txns || []; cats = data.cats || cats; accs = data.accs || accs; mems = data.mems || mems;
   try { localStorage.setItem("fty", JSON.stringify({ txns, cats, accs, mems, pinHash })); } catch (e) {}
-  sync.lastRev = Math.max(sync.lastRev || 0, rIn || 0); sync.lastSyncAt = updatedAt; sync.lastError = null; saveSync(); render(); maybeAskOwner();
+  sync.lastRev = rIn || 0; /* adopt the cloud's own rev exactly — a higher LOCAL number must never mask the gist's state */ sync.lastSyncAt = updatedAt; sync.lastError = null; saveSync(); render(); maybeAskOwner();
 }
 function stashBackup() {
   try { localStorage.setItem("ftyPrevSync", JSON.stringify({ txns, cats, accs, mems, pinHash, savedAt: new Date().toISOString() })); } catch (e) {}
@@ -528,7 +531,7 @@ function doMerge(data, updatedAt) {
     if (seen.has(t.id)) return;
     txns.push({ ...t, categoryId: lid["cat:" + t.categoryId] || t.categoryId, accountId: lid["acc:" + t.accountId] || t.accountId, memberId: lid["mem:" + t.memberId] || t.memberId });
   });
-  sync.lastRev = Math.max(sync.lastRev || 0, data.rev || 0); sync.lastSyncAt = updatedAt; sync.lastError = null;
+  sync.lastRev = data.rev || 0; sync.lastSyncAt = updatedAt; sync.lastError = null;
   /* persist WITHOUT save(): save() auto-schedules a push, and doMerge now also
      runs inside pushSync's preflight — that would re-trigger pushSync forever */
   try { localStorage.setItem("fty", JSON.stringify({ txns, cats, accs, mems, pinHash })); } catch (e) {}
@@ -559,6 +562,7 @@ async function pushSync(silent) {
        LOWER rev, so every other device then said "already up to date" forever).
        Rule: if the cloud moved ahead since our last pull, adopt/merge it FIRST,
        then push the combined state (revision always lands above the cloud's). */
+    let cloudRev = null;
     try {
       const pr = await fetch("https://api.github.com/gists/" + sync.gistId, { headers: ghHeaders(sync.token) });
       if (pr.ok) {
@@ -567,13 +571,14 @@ async function pushSync(silent) {
         if (pf && pf.content) {
           const { data, updatedAt } = await unpackState(pf.content);
           const rIn = data.rev || 0, rLoc = sync.lastRev || 0;
+          cloudRev = rIn || null;
           const same = stateFP(data) === stateFP({ txns, cats, accs, mems });
           if (same) {
             sync.lastRev = Math.max(rLoc, rIn); sync.lastSyncAt = updatedAt; sync.lastError = null; saveSync();
-            syncBusy = false; renderOverlays(), render();
+            renderOverlays(), render();
             return; /* cloud already identical — nothing to push */
           }
-          if (rIn > rLoc || (rIn === rLoc && updatedAt !== (sync.lastSyncAt || ""))) {
+          if (rIn > 0 && rIn !== rLoc) {
             const hasLocal = (txns || []).length > 0 || (accs || []).length > 0 || (mems || []).length > 0;
             const cloudEmpty = !(data.txns || []).length && !(data.accs || []).length;
             if (!hasLocal || cloudEmpty) applyPull(data, updatedAt, rIn);
@@ -583,7 +588,7 @@ async function pushSync(silent) {
         }
       }
     } catch (e) { /* preflight problems (e.g. no network) — let the real push try anyway */ }
-    const content = await packState();
+    const content = await packState(cloudRev);
     const r = await fetch("https://api.github.com/gists/" + sync.gistId, { method: "PATCH", headers: ghHeaders(sync.token), body: JSON.stringify({ files: { "finance-data.json": { content } } }) });
     if (!r.ok) throw new Error("HTTP " + r.status);
     sync.lastSyncAt = new Date().toISOString(); sync.lastError = null;
@@ -609,8 +614,8 @@ async function pullSync(silent) {
     /* revision-based check (not clock-based): clocks between devices can skew,
        which made fresh edits look "already up to date" forever. */
     const rIn = data.rev || 0, rLoc = sync.lastRev || 0;
-    const newer = rIn === 0 ? updatedAt !== (sync.lastSyncAt || "") : (rIn > rLoc || (rIn === rLoc && updatedAt !== (sync.lastSyncAt || "")));
     const same = stateFP(data) === stateFP({ txns, cats, accs, mems });
+    const newer = rIn === 0 ? updatedAt !== (sync.lastSyncAt || "") : (rIn > rLoc || (rIn === rLoc && updatedAt !== (sync.lastSyncAt || "")) || (!same && rIn !== rLoc));
     if (same) {
       /* cloud copy is byte-for-byte the same data — nothing to do, ever */
       sync.lastRev = Math.max(rLoc, rIn); sync.lastSyncAt = updatedAt; sync.lastError = null; saveSync();
@@ -896,7 +901,7 @@ function renderSettings() {
   $("content").innerHTML = `
     <div class="card" style="margin-bottom:14px;">
       <h4>🔐 Security</h4>
-      <p class="muted" style="margin-bottom:6px">Build: 2026-11-23 · safe-sync r4 (push looks before writing)</p>
+      <p class="muted" style="margin-bottom:6px">Build: 2026-11-23 · safe-sync r5 (cloud-owned revision)</p>
       <p class="muted">${pinHash ? "App lock is on, backed by this device's browser storage. Tap 🔒 (top right) to lock." : "No PIN set yet. Tap 🔑 (top right) to set one."}</p>
       ${pinHash ? '<button class="btn ghost" onclick="if(confirm(\'Remove PIN? Anyone opening this app on this device will see your data.\')){pinHash=null;save();render();}">Remove PIN</button>' : ""}
       <p class="muted" style="margin-top:8px">Encryption at rest of the whole database is the next security upgrade — after your test month.</p>
