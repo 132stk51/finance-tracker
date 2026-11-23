@@ -475,7 +475,9 @@ async function syncKey() { return crypto.subtle.importKey("raw", b64d(sync.keyB6
 async function packState() {
   const key = await syncKey();
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(JSON.stringify({ txns, cats, accs, mems })));
+  const rev = (sync.lastRev || 0) + 1;
+  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(JSON.stringify({ txns, cats, accs, mems, rev })));
+  sync._nextRev = rev;
   return JSON.stringify({ iv: b64e(iv), data: b64e(ct), updatedAt: new Date().toISOString() });
 }
 async function unpackState(content) {
@@ -492,7 +494,8 @@ async function pushSync(silent) {
     const content = await packState();
     const r = await fetch("https://api.github.com/gists/" + sync.gistId, { method: "PATCH", headers: ghHeaders(sync.token), body: JSON.stringify({ files: { "finance-data.json": { content } } }) });
     if (!r.ok) throw new Error("HTTP " + r.status);
-    sync.lastSyncAt = new Date().toISOString(); sync.lastError = null; saveSync();
+    sync.lastSyncAt = new Date().toISOString(); sync.lastError = null;
+    sync.lastRev = sync._nextRev || ((sync.lastRev || 0) + 1); delete sync._nextRev; saveSync();
     if (view === "settings" && !locked) renderOverlays(), render();
   } catch (e) {
     sync.lastError = String(e.message || e); saveSync();
@@ -509,10 +512,14 @@ async function pullSync(silent) {
     const f = g.files && g.files["finance-data.json"];
     if (!f || !f.content) { syncBusy = false; if (!silent) alert("Cloud copy is empty — push first."); return; }
     const { data, updatedAt } = await unpackState(f.content);
-    if (updatedAt > (sync.lastSyncAt || "")) {
+    /* revision-based check (not clock-based): clocks between devices can skew,
+       which made fresh edits look "already up to date" forever. */
+    const rIn = data.rev || 0, rLoc = sync.lastRev || 0;
+    const newer = rIn === 0 ? updatedAt !== (sync.lastSyncAt || "") : (rIn > rLoc || (rIn === rLoc && updatedAt !== (sync.lastSyncAt || "")));
+    if (newer) {
       txns = data.txns || []; cats = data.cats || cats; accs = data.accs || accs; mems = data.mems || mems;
       try { localStorage.setItem("fty", JSON.stringify({ txns, cats, accs, mems, pinHash })); } catch (e) {}
-      sync.lastSyncAt = updatedAt; sync.lastError = null; saveSync(); render(); maybeAskOwner();
+      sync.lastRev = Math.max(rLoc, rIn); sync.lastSyncAt = updatedAt; sync.lastError = null; saveSync(); render(); maybeAskOwner();
       if (!silent) alert("Pulled latest data (" + txns.length + " entries).");
     } else { if (!silent) alert("Already up to date."); }
     syncBusy = false;
@@ -781,7 +788,7 @@ function renderSettings() {
   $("content").innerHTML = `
     <div class="card" style="margin-bottom:14px;">
       <h4>🔐 Security</h4>
-      <p class="muted" style="margin-bottom:6px">Build: 2026-11-23 · owners-v2 r2</p>
+      <p class="muted" style="margin-bottom:6px">Build: 2026-11-23 · sync rev-fix</p>
       <p class="muted">${pinHash ? "App lock is on, backed by this device's browser storage. Tap 🔒 (top right) to lock." : "No PIN set yet. Tap 🔑 (top right) to set one."}</p>
       ${pinHash ? '<button class="btn ghost" onclick="if(confirm(\'Remove PIN? Anyone opening this app on this device will see your data.\')){pinHash=null;save();render();}">Remove PIN</button>' : ""}
       <p class="muted" style="margin-top:8px">Encryption at rest of the whole database is the next security upgrade — after your test month.</p>
@@ -827,15 +834,15 @@ function renderSettings() {
           <button class="btn ghost" style="color:#fb7185" onclick="unlinkSync()">Unlink</button>
         </div>`
       : `
-        <div class="muted" style="margin-bottom:8px;"><b>One-time setup on this device:</b> create a GitHub token at github.com → Settings → Developer settings → Personal access tokens → <i>Generate new token (classic)</i> → tick only the <b>gist</b> scope → copy the token here.</div>
+        <div class="muted" style="margin-bottom:8px;"><b>Every device needs its own GitHub token</b> (github.com → Settings → Developer settings → Personal access tokens → <i>Generate new token (classic)</i> → tick only the <b>gist</b> scope). Each device can reuse the same gist; data stays end-to-end encrypted.</div>
         <input id="ghToken" placeholder="ghp_… your token (stored only on this device)" style="font-size:12px;margin-bottom:8px;" />
-        <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:10px;">
-          <button class="btn primary" onclick="createSync()">① Start new cloud sync</button>
-        </div>
-        <div class="muted" style="margin-bottom:6px;"><b>Second device (e.g. web):</b> paste a token above <i>and</i> the Sync Code from the first device, then:</div>
+        <div class="muted" style="margin-bottom:6px;"><b>Joining on a 2nd/3rd device? (the normal case)</b> Paste your token above <i>and</i> the Sync Code from the first device, then:</div>
         <textarea id="syncCode" rows="2" style="font-size:11px;font-family:monospace" placeholder='{"gistId":"…","keyB64":"…"}'></textarea>
         <div style="height:8px"></div>
-        <button class="btn" onclick="linkSync()">② Link this device</button>
+        <button class="btn primary" onclick="linkSync()">② Link this device (joins the existing sync)</button>
+        <div style="height:10px"></div>
+        <button class="btn ghost" style="font-size:11px;color:#94a3b8" onclick="if(confirm('Start a FRESH sync only on the very first device — it creates a new empty gist and a new key. Existing devices linked to the old gist will NOT see it. Continue?'))createSync()">First device only: start a fresh cloud sync</button>
+        <div style="height:10px"></div>
       `}
     </div>
     <div class="card">
