@@ -558,7 +558,9 @@ async function pushSync(silent) {
     sync.lastRev = sync._nextRev || ((sync.lastRev || 0) + 1); delete sync._nextRev; saveSync();
     if (view === "settings" && !locked) renderOverlays(), render();
   } catch (e) {
+    syncBusy = false;
     sync.lastError = String(e.message || e); saveSync();
+    if (!locked) renderOverlays();
     if (!silent && !locked) alert("Sync push failed: " + sync.lastError + " (check internet or token)");
   }
 }
@@ -862,7 +864,7 @@ function renderSettings() {
   $("content").innerHTML = `
     <div class="card" style="margin-bottom:14px;">
       <h4>🔐 Security</h4>
-      <p class="muted" style="margin-bottom:6px">Build: 2026-11-23 · safe-sync r2 (same-content handshake)</p>
+      <p class="muted" style="margin-bottom:6px">Build: 2026-11-23 · safe-sync r3 (shows gist id + sync errors)</p>
       <p class="muted">${pinHash ? "App lock is on, backed by this device's browser storage. Tap 🔒 (top right) to lock." : "No PIN set yet. Tap 🔑 (top right) to set one."}</p>
       ${pinHash ? '<button class="btn ghost" onclick="if(confirm(\'Remove PIN? Anyone opening this app on this device will see your data.\')){pinHash=null;save();render();}">Remove PIN</button>' : ""}
       <p class="muted" style="margin-top:8px">Encryption at rest of the whole database is the next security upgrade — after your test month.</p>
@@ -1003,6 +1005,12 @@ function renderAddSheet() {
 
 function renderOverlays() {
   let h = "";
+  // visible sync error (auto-push failures are silent otherwise)
+  if (sync && sync.gistId && sync.lastError && !locked && !mergeBox) {
+    h += `<div class="overlay" style="z-index:60;align-items:flex-start;padding-top:12px"><div class="panel" style="border:1px solid #fb7185;padding:10px 14px">
+      <p style="margin:0;font-size:12.5px;color:#fda4af">☁️ Cloud sync problem: ${esc(sync.lastError)} <button class="btn ghost" style="padding:2px 8px;font-size:11px" onclick="sync.lastError=null;saveSync();renderOverlays()">Dismiss</button></p>
+    </div></div>`;
+  }
   // device-owner ask (first open / new device)
   if (needOwnerAsk) {
     h += `<div class="overlay" style="z-index:50"><div class="panel">
@@ -1071,7 +1079,8 @@ function renderOverlays() {
     h += `<div class="overlay" style="z-index:46"><div class="panel">
       <h3 style="margin-top:0">⚠️ Cloud and this device differ</h3>
       <p style="font-size:13.5px;color:#cbd5e1;line-height:1.55;">Applying the cloud copy as-is would <b>replace</b> this device's data, so nothing was applied yet.</p>
-      <p style="font-size:13.5px;color:#cbd5e1;line-height:1.55;">☁️ Cloud: <b>${(mb.data.txns || []).length}</b> entries, <b>${(mb.data.accs || []).length}</b> channels<br>📱 This device: <b>${(txns || []).length}</b> entries, <b>${(accs || []).length}</b> channels</p>
+      <p style="font-size:13.5px;color:#cbd5e1;line-height:1.55;">☁️ Cloud (gist <b>${esc(String((sync && sync.gistId) || "").slice(0, 8))}…</b>): <b>${(mb.data.txns || []).length}</b> entries, <b>${(mb.data.accs || []).length}</b> channels<br>📱 This device: <b>${(txns || []).length}</b> entries, <b>${(accs || []).length}</b> channels</p>
+      <p class="muted" style="margin-bottom:6px">If the two gists shown on your devices don't match after re-downloading, this device is linked to the wrong cloud — Unlink and link again with the Sync Code from the device that has the correct data.</p>
       <div class="row"><button class="btn primary" style="flex:1" onclick="resolveMerge('merge')">🔀 Merge — keep both</button></div>
       <div class="row"><button class="btn" style="flex:1;font-size:12px" onclick="resolveMerge('cloud')">☁️ Replace this device with cloud</button>
       <button class="btn" style="flex:1;font-size:12px" onclick="resolveMerge('local')">📱 Keep this device · push it up</button></div>
