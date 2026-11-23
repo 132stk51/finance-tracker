@@ -529,12 +529,15 @@ function doMerge(data, updatedAt) {
     txns.push({ ...t, categoryId: lid["cat:" + t.categoryId] || t.categoryId, accountId: lid["acc:" + t.accountId] || t.accountId, memberId: lid["mem:" + t.memberId] || t.memberId });
   });
   sync.lastRev = Math.max(sync.lastRev || 0, data.rev || 0); sync.lastSyncAt = updatedAt; sync.lastError = null;
-  save(); saveSync(); render(); maybeAskOwner();
+  /* persist WITHOUT save(): save() auto-schedules a push, and doMerge now also
+     runs inside pushSync's preflight — that would re-trigger pushSync forever */
+  try { localStorage.setItem("fty", JSON.stringify({ txns, cats, accs, mems, pinHash })); } catch (e) {}
+  saveSync(); render(); maybeAskOwner();
 }
 function resolveMerge(mode) {
   const mb = mergeBox; mergeBox = null; renderOverlays();
   if (!mb) return;
-  if (mode === "merge") { doMerge(mb.data, mb.updatedAt); alert("Merged: this device now has " + (txns || []).length + " entries (cloud entries added; duplicates skipped)."); }
+  if (mode === "merge") { doMerge(mb.data, mb.updatedAt); scheduleSync(); alert("Merged: this device now has " + (txns || []).length + " entries (cloud entries added; duplicates skipped). It is being pushed up now."); }
   else if (mode === "cloud") { applyPull(mb.data, mb.updatedAt); alert("This device now matches the cloud. If the cloud copy was wrong, use Settings → 🕘 Restore last pre-sync backup."); }
   else { sync._bypassPullGuard = true; sync.lastSyncAt = sync.lastSyncAt || "re-pushed"; pushSync(false); delete sync._bypassPullGuard; }
   render();
@@ -551,6 +554,35 @@ async function pushSync(silent) {
     return;
   }
   try {
+    /* ---- PREFLIGHT: look before pushing. A device with a stale revision must
+       never push backward (it once overwrote the cloud with an older copy at a
+       LOWER rev, so every other device then said "already up to date" forever).
+       Rule: if the cloud moved ahead since our last pull, adopt/merge it FIRST,
+       then push the combined state (revision always lands above the cloud's). */
+    try {
+      const pr = await fetch("https://api.github.com/gists/" + sync.gistId, { headers: ghHeaders(sync.token) });
+      if (pr.ok) {
+        const pg = await pr.json();
+        const pf = pg.files && pg.files["finance-data.json"];
+        if (pf && pf.content) {
+          const { data, updatedAt } = await unpackState(pf.content);
+          const rIn = data.rev || 0, rLoc = sync.lastRev || 0;
+          const same = stateFP(data) === stateFP({ txns, cats, accs, mems });
+          if (same) {
+            sync.lastRev = Math.max(rLoc, rIn); sync.lastSyncAt = updatedAt; sync.lastError = null; saveSync();
+            syncBusy = false; renderOverlays(), render();
+            return; /* cloud already identical — nothing to push */
+          }
+          if (rIn > rLoc || (rIn === rLoc && updatedAt !== (sync.lastSyncAt || ""))) {
+            const hasLocal = (txns || []).length > 0 || (accs || []).length > 0 || (mems || []).length > 0;
+            const cloudEmpty = !(data.txns || []).length && !(data.accs || []).length;
+            if (!hasLocal || cloudEmpty) applyPull(data, updatedAt, rIn);
+            else doMerge(data, updatedAt); /* union merge — nothing is lost; merged state is pushed below */
+            renderOverlays(), render();
+          }
+        }
+      }
+    } catch (e) { /* preflight problems (e.g. no network) — let the real push try anyway */ }
     const content = await packState();
     const r = await fetch("https://api.github.com/gists/" + sync.gistId, { method: "PATCH", headers: ghHeaders(sync.token), body: JSON.stringify({ files: { "finance-data.json": { content } } }) });
     if (!r.ok) throw new Error("HTTP " + r.status);
@@ -864,7 +896,7 @@ function renderSettings() {
   $("content").innerHTML = `
     <div class="card" style="margin-bottom:14px;">
       <h4>🔐 Security</h4>
-      <p class="muted" style="margin-bottom:6px">Build: 2026-11-23 · safe-sync r3 (shows gist id + sync errors)</p>
+      <p class="muted" style="margin-bottom:6px">Build: 2026-11-23 · safe-sync r4 (push looks before writing)</p>
       <p class="muted">${pinHash ? "App lock is on, backed by this device's browser storage. Tap 🔒 (top right) to lock." : "No PIN set yet. Tap 🔑 (top right) to set one."}</p>
       ${pinHash ? '<button class="btn ghost" onclick="if(confirm(\'Remove PIN? Anyone opening this app on this device will see your data.\')){pinHash=null;save();render();}">Remove PIN</button>' : ""}
       <p class="muted" style="margin-top:8px">Encryption at rest of the whole database is the next security upgrade — after your test month.</p>
