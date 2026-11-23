@@ -11,6 +11,16 @@
 <script>
   // Offline support; safe no-op when sw.js is absent (e.g. in previews)
   try { if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) addEventListener("load", function () { navigator.serviceWorker.register("sw.js").catch(function () {}); }); } catch (e) {}
+  // Early error trap: must be attached BEFORE the main script so even a syntax error shows a readable banner instead of a blank app.
+  addEventListener("error", function (ev) {
+    try {
+      var m = (ev && (ev.message || (ev.error && ev.error.message))) || "unknown error";
+      var ln = (ev && ev.lineno) ? " @ line " + ev.lineno : "";
+      var b = document.getElementById("errToast");
+      if (!b) { b = document.createElement("div"); b.id = "errToast"; b.style.cssText = "position:fixed;left:10px;right:10px;bottom:14px;z-index:9999;background:#7f1d1d;color:#fff;font-size:11px;padding:8px 10px;border-radius:10px;font-family:monospace;word-break:break-all;"; (document.body || document.documentElement).appendChild(b); }
+      b.textContent = "⚠️ " + m + ln + " — tell Vibe this";
+    } catch (e) {}
+  });
 </script>
 <style>
   :root { color-scheme: dark; }
@@ -143,12 +153,7 @@ const DEFAULT_ACCOUNTS = [
   { id: "bank", name: "SBI Bank" },
 ];
 const DEFAULT_MEMBERS = [];
-const DEFAULT_MEMBERS = [
-  { id: "me", name: "You" },
-  { id: "wife", name: "Wife" },
-  { id: "joint", name: "Joint" },
-];
-const PALETTE = ["#22c55e","#f97316","#3b82f6","#eab308","#a855f7","#ec4899","#ef4444","#14b8a6","#6366f1","#0ea5e9","#f43f5e","#84cc16","#94a3b8"];
+const PALETTE =["#22c55e","#f97316","#3b82f6","#eab308","#a855f7","#ec4899","#ef4444","#14b8a6","#6366f1","#0ea5e9","#f43f5e","#84cc16","#94a3b8"];
 const ICONS = ["🛒","🍽️","🚗","💡","🏠","🛍️","💊","🎬","📺","📚","✈️","📈","📦","💰","🏦","🎓","🐾","🎁","⚽","☕"];
 
 function makeSeed(cats, accs) {
@@ -171,7 +176,7 @@ function makeSeed(cats, accs) {
 
 /* ---------- state ---------- */
 let txns = [], cats = [], accs = [], mems = [];
-let memDefault = "me";
+let memDefault = "";
 let view = "dashboard", month = monthStr(todayStr());
 let editingId = null, menu = null, menuGuard = 0, pressTimer = null, needOwnerAsk = false;
 let pendingDelete = null, confirmBox = null, editorBox = null, showTrashFlag = false;
@@ -506,7 +511,7 @@ async function pullSync(silent) {
     const { data, updatedAt } = await unpackState(f.content);
     if (updatedAt > (sync.lastSyncAt || "")) {
       txns = data.txns || []; cats = data.cats || cats; accs = data.accs || accs; mems = data.mems || mems;
-      try { localStorage.setItem("fty", JSON.stringify({ txns, cats, accs, pinHash })); } catch (e) {}
+      try { localStorage.setItem("fty", JSON.stringify({ txns, cats, accs, mems, pinHash })); } catch (e) {}
       sync.lastSyncAt = updatedAt; sync.lastError = null; saveSync(); render(); maybeAskOwner();
       if (!silent) alert("Pulled latest data (" + txns.length + " entries).");
     } else { if (!silent) alert("Already up to date."); }
@@ -663,7 +668,6 @@ function renderDash() {
             <span class="bad" style="white-space:nowrap;">${fmt(v.amount)}</span>
           </div>`).join("");
       })()}
-      })()}
       <div class="legend" style="border-top:1px solid #1e293b;margin-top:6px;padding-top:6px;">
         <span style="font-weight:700;">Total spent</span><span class="bad" style="font-weight:700;">${fmt(spend)}</span>
       </div>
@@ -777,7 +781,7 @@ function renderSettings() {
   $("content").innerHTML = `
     <div class="card" style="margin-bottom:14px;">
       <h4>🔐 Security</h4>
-      <p class="muted" style="margin-bottom:6px">Build: 2026-11-23 · owners-v2</p>
+      <p class="muted" style="margin-bottom:6px">Build: 2026-11-23 · owners-v2 r2</p>
       <p class="muted">${pinHash ? "App lock is on, backed by this device's browser storage. Tap 🔒 (top right) to lock." : "No PIN set yet. Tap 🔑 (top right) to set one."}</p>
       ${pinHash ? '<button class="btn ghost" onclick="if(confirm(\'Remove PIN? Anyone opening this app on this device will see your data.\')){pinHash=null;save();render();}">Remove PIN</button>' : ""}
       <p class="muted" style="margin-top:8px">Encryption at rest of the whole database is the next security upgrade — after your test month.</p>
@@ -800,7 +804,7 @@ function renderSettings() {
         <button class="btn ghost" style="padding:4px 9px;font-size:11px;color:#818cf8" onclick="openCatEditor('acc','edit','${a.id}')">Edit</button>
         <button class="btn ghost" style="padding:4px 9px;font-size:11px;color:#fb7185" onclick="askDeleteCA('acc','${a.id}')">Delete</button>
       </div>`; }).join("")}
-      <p class="muted" style="margin-top:8px">Set each channel's 👤 owner via Edit. In the add sheet, picking "Spent by" brings that member's channels to the front — you can still pay for anyone from any account.</p>
+      <p class="muted" style="margin-top:8px">Set each channel's 👤 owner via Edit. In the add sheet, picking "Spent by" shows only that owner's channels; when editing an entry you'll see all channels (grouped by owner) so misfiles can be moved.</p>
     </div>
     <div class="card" style="margin-bottom:14px;">
       <div class="row" style="justify-content:space-between;"><h4>👤 Owners (${mems.length})</h4><button class="btn primary" style="font-size:11px;padding:6px 12px" onclick="openCatEditor('mem','add')">+ New</button></div>
