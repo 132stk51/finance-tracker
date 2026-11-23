@@ -179,7 +179,7 @@ let txns = [], cats = [], accs = [], mems = [];
 let memDefault = "";
 let view = "dashboard", month = monthStr(todayStr());
 let editingId = null, menu = null, menuGuard = 0, pressTimer = null, needOwnerAsk = false;
-let pendingDelete = null, confirmBox = null, editorBox = null, showTrashFlag = false;
+let pendingDelete = null, confirmBox = null, editorBox = null, showTrashFlag = false, mergeBox = null;
 let imp = null; // {step, rows, name, hasHeader, map:{date,payee,amount,sign,debit,credit,category}, msg}
 let pinHash = null, locked = false;
 let selMode = false, selSet = new Set();
@@ -196,11 +196,15 @@ function loadAll() {
   try {
     const d = JSON.parse(localStorage.getItem("fty") || "null");
     if (d && d.cats && d.cats.length) {
-      txns = d.txns || []; cats = d.cats; accs = d.accs || DEFAULT_ACCOUNTS; mems = (d.mems && d.mems.length) ? d.mems : DEFAULT_MEMBERS.slice(); pinHash = d.pinHash || null;
+      txns = d.txns || []; cats = d.cats; accs = d.accs || []; mems = d.mems || []; pinHash = d.pinHash || null;
     } else {
-      cats = DEFAULT_CATEGORIES.slice(); accs = DEFAULT_ACCOUNTS.slice(); mems = DEFAULT_MEMBERS.slice(); txns = [];
+      /* fresh install starts COMPLETELY empty — no preloaded categories,
+         accounts or owners. (Preloaded accounts shadowed cloud data, since a
+         non-empty local then triggers the sync-conflict dialog.) Sample data
+         stays available in Settings → Load sample data (demo). */
+      cats = []; accs = []; mems = []; txns = [];
     }
-  } catch (e) { cats = DEFAULT_CATEGORIES.slice(); accs = DEFAULT_ACCOUNTS.slice(); mems = DEFAULT_MEMBERS.slice(); txns = []; }
+  } catch (e) { cats = []; accs = []; mems = []; txns = []; }
   try { const p = JSON.parse(localStorage.getItem("ftyPrefs") || "null"); if (p && p.memDefault) memDefault = p.memDefault; } catch (e) {}
 }
 loadAll();
@@ -486,10 +490,59 @@ async function unpackState(content) {
   const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64d(d.iv) }, key, b64d(d.data));
   return { data: JSON.parse(new TextDecoder().decode(pt)), updatedAt: d.updatedAt };
 }
+/* ---------- safe pull: apply / merge / backup ---------- */
+function applyPull(data, updatedAt, rIn) {
+  txns = data.txns || []; cats = data.cats || cats; accs = data.accs || accs; mems = data.mems || mems;
+  try { localStorage.setItem("fty", JSON.stringify({ txns, cats, accs, mems, pinHash })); } catch (e) {}
+  sync.lastRev = Math.max(sync.lastRev || 0, rIn || 0); sync.lastSyncAt = updatedAt; sync.lastError = null; saveSync(); render(); maybeAskOwner();
+}
+function stashBackup() {
+  try { localStorage.setItem("ftyPrevSync", JSON.stringify({ txns, cats, accs, mems, pinHash, savedAt: new Date().toISOString() })); } catch (e) {}
+}
+function restorePrevSync() {
+  let d = null; try { d = JSON.parse(localStorage.getItem("ftyPrevSync") || "null"); } catch (e) {}
+  if (!d) { alert("No pre-sync backup found."); return; }
+  txns = d.txns || []; cats = d.cats || []; accs = d.accs || []; mems = d.mems || []; pinHash = d.pinHash || null;
+  save(); render(); alert("Restored the data as it was before the last sync merge/pull (backup from " + new Date(d.savedAt).toLocaleString("en-IN") + ").\n\nIf this is the correct copy, push it: Settings → ⬆️ Push now — or just make any change, it auto-pushes.");
+}
+function doMerge(data, updatedAt) {
+  /* union of the two datasets. Same-named categories/channels/owners on both
+     devices are treated as the SAME item (cloud entries are re-pointed to the
+     local id); otherwise the cloud item is added. Entries are unioned by id,
+     so nothing is lost — but note: an entry deleted on one device can reappear
+     if the other device's copy still has it (acceptable for now). */
+  const byName = (arr) => { const m = {}; (arr || []).forEach((x) => { if (x && x.name) m[String(x.name).toLowerCase()] = x.id; }); return m; };
+  const catN = byName(cats), accN = byName(accs), memN = byName(mems), lid = {};
+  (data.cats || []).forEach((c) => { if (cats.some((x) => x.id === c.id)) return; if (c.name && catN[c.name.toLowerCase()]) lid["cat:" + c.id] = catN[c.name.toLowerCase()]; else cats.push(c); });
+  (data.accs || []).forEach((a) => { if (accs.some((x) => x.id === a.id)) return; if (a.name && accN[a.name.toLowerCase()]) lid["acc:" + a.id] = accN[a.name.toLowerCase()]; else accs.push(a); });
+  (data.mems || []).forEach((m) => { if (mems.some((x) => x.id === m.id)) return; if (m.name && memN[m.name.toLowerCase()]) lid["mem:" + m.id] = memN[m.name.toLowerCase()]; else mems.push(m); });
+  const seen = new Set(txns.map((t) => t.id));
+  (data.txns || []).forEach((t) => {
+    if (seen.has(t.id)) return;
+    txns.push({ ...t, categoryId: lid["cat:" + t.categoryId] || t.categoryId, accountId: lid["acc:" + t.accountId] || t.accountId, memberId: lid["mem:" + t.memberId] || t.memberId });
+  });
+  sync.lastRev = Math.max(sync.lastRev || 0, data.rev || 0); sync.lastSyncAt = updatedAt; sync.lastError = null;
+  save(); saveSync(); render(); maybeAskOwner();
+}
+function resolveMerge(mode) {
+  const mb = mergeBox; mergeBox = null; renderOverlays();
+  if (!mb) return;
+  if (mode === "merge") { doMerge(mb.data, mb.updatedAt); alert("Merged: this device now has " + (txns || []).length + " entries (cloud entries added; duplicates skipped)."); }
+  else if (mode === "cloud") { applyPull(mb.data, mb.updatedAt); alert("This device now matches the cloud. If the cloud copy was wrong, use Settings → 🕘 Restore last pre-sync backup."); }
+  else { sync._bypassPullGuard = true; sync.lastSyncAt = sync.lastSyncAt || "re-pushed"; pushSync(false); delete sync._bypassPullGuard; }
+  render();
+}
+
 function ghHeaders(token) { return { Authorization: "token " + token, Accept: "application/vnd.github+json" }; }
 function scheduleSync() { if (!sync || syncBusy) return; clearTimeout(pushTimer); pushTimer = setTimeout(() => pushSync(true), 2500); }
 async function pushSync(silent) {
   if (!sync || !sync.gistId) return;
+  /* guard: a device that has never pulled cloud data must not push —
+     pushing first is what wiped the old device's cloud copy (Nov 23 incident) */
+  if (!sync.lastSyncAt && !sync._bypassPullGuard) {
+    if (!silent) alert("This device hasn't pulled the cloud copy yet. Tap ⬇️ Pull now first — pushing before the first pull would overwrite the cloud with this device's (possibly empty) data.");
+    return;
+  }
   try {
     const content = await packState();
     const r = await fetch("https://api.github.com/gists/" + sync.gistId, { method: "PATCH", headers: ghHeaders(sync.token), body: JSON.stringify({ files: { "finance-data.json": { content } } }) });
@@ -517,10 +570,18 @@ async function pullSync(silent) {
     const rIn = data.rev || 0, rLoc = sync.lastRev || 0;
     const newer = rIn === 0 ? updatedAt !== (sync.lastSyncAt || "") : (rIn > rLoc || (rIn === rLoc && updatedAt !== (sync.lastSyncAt || "")));
     if (newer) {
-      txns = data.txns || []; cats = data.cats || cats; accs = data.accs || accs; mems = data.mems || mems;
-      try { localStorage.setItem("fty", JSON.stringify({ txns, cats, accs, mems, pinHash })); } catch (e) {}
-      sync.lastRev = Math.max(rLoc, rIn); sync.lastSyncAt = updatedAt; sync.lastError = null; saveSync(); render(); maybeAskOwner();
-      if (!silent) alert("Pulled latest data (" + txns.length + " entries).");
+      const hasLocal = (txns || []).length > 0 || (accs || []).length > 0 || (mems || []).length > 0;
+      const cloudEmpty = !(data.txns || []).length && !(data.accs || []).length;
+      if (!hasLocal || cloudEmpty) {
+        applyPull(data, updatedAt, rIn);
+        if (!silent) alert("Pulled latest data (" + (txns || []).length + " entries).");
+      } else {
+        /* both sides have data and they differ — never silently replace.
+           Offer merge; stash a pre-sync backup of this device first. */
+        stashBackup();
+        mergeBox = { data, updatedAt, rIn, rLoc };
+        syncBusy = false; renderOverlays(); return;
+      }
     } else { if (!silent) alert("Already up to date."); }
     syncBusy = false;
   } catch (e) {
@@ -788,7 +849,7 @@ function renderSettings() {
   $("content").innerHTML = `
     <div class="card" style="margin-bottom:14px;">
       <h4>🔐 Security</h4>
-      <p class="muted" style="margin-bottom:6px">Build: 2026-11-23 · sync rev-fix</p>
+      <p class="muted" style="margin-bottom:6px">Build: 2026-11-23 · safe-sync (no preloads + merge)</p>
       <p class="muted">${pinHash ? "App lock is on, backed by this device's browser storage. Tap 🔒 (top right) to lock." : "No PIN set yet. Tap 🔑 (top right) to set one."}</p>
       ${pinHash ? '<button class="btn ghost" onclick="if(confirm(\'Remove PIN? Anyone opening this app on this device will see your data.\')){pinHash=null;save();render();}">Remove PIN</button>' : ""}
       <p class="muted" style="margin-top:8px">Encryption at rest of the whole database is the next security upgrade — after your test month.</p>
@@ -851,6 +912,7 @@ function renderSettings() {
       <div class="row" style="flex-wrap:wrap;gap:8px;">
         <button class="btn primary" onclick="backupData()">⬇️ Download backup (JSON)</button>
         <button class="btn ghost" onclick="restorePick()">⬆️ Restore backup</button>
+        ${localStorage.getItem("ftyPrevSync") ? `<button class="btn ghost" style="color:#fbbf24" onclick="restorePrevSync()">🕘 Restore last pre-sync backup</button>` : ""}
         <button class="btn ghost" onclick="if(confirm('Replace current data with sample data? Your current entries will be lost (unless backed up).')){cats=DEFAULT_CATEGORIES.slice();accs=DEFAULT_ACCOUNTS.slice();txns=makeSeed(cats,accs);save();render();}">Load sample data (demo)</button>
       </div>
     </div>`;
@@ -988,6 +1050,20 @@ function renderOverlays() {
       <div style="height:14px"></div>
       <div class="row"><button class="btn" style="flex:1" onclick="editorBox=null;renderOverlays()">Cancel</button>
       <button class="btn primary" style="flex:1" onclick="stepCatEditor()">${eb.mode === "add" ? "Create" : "Continue"}</button></div>
+    </div></div>`;
+  }
+  // sync conflict / merge chooser
+  if (mergeBox) {
+    const mb = mergeBox;
+    h += `<div class="overlay" style="z-index:46"><div class="panel">
+      <h3 style="margin-top:0">⚠️ Cloud and this device differ</h3>
+      <p style="font-size:13.5px;color:#cbd5e1;line-height:1.55;">Applying the cloud copy as-is would <b>replace</b> this device's data, so nothing was applied yet.</p>
+      <p style="font-size:13.5px;color:#cbd5e1;line-height:1.55;">☁️ Cloud: <b>${(mb.data.txns || []).length}</b> entries, <b>${(mb.data.accs || []).length}</b> channels<br>📱 This device: <b>${(txns || []).length}</b> entries, <b>${(accs || []).length}</b> channels</p>
+      <div class="row"><button class="btn primary" style="flex:1" onclick="resolveMerge('merge')">🔀 Merge — keep both</button></div>
+      <div class="row"><button class="btn" style="flex:1;font-size:12px" onclick="resolveMerge('cloud')">☁️ Replace this device with cloud</button>
+      <button class="btn" style="flex:1;font-size:12px" onclick="resolveMerge('local')">📱 Keep this device · push it up</button></div>
+      <p class="muted" style="margin-bottom:6px">Before any choice, the data that was on this device is saved as a backup (Settings → 🕘 Restore last pre-sync backup).</p>
+      <div class="row"><button class="btn ghost" style="flex:1" onclick="mergeBox=null;renderOverlays()">Cancel (decide later — use ⬇️ Pull now)</button></div>
     </div></div>`;
   }
   // generic confirm
