@@ -628,11 +628,16 @@ async function pullSync(silent) {
         applyPull(data, updatedAt, rIn);
         if (!silent) alert("Pulled latest data (" + (txns || []).length + " entries).");
       } else {
-        /* both sides have data and they differ — never silently replace.
-           Offer merge; stash a pre-sync backup of this device first. */
+        /* divergent. Automatic pulls resolve silently (union merge, backup taken);
+           only a MANUAL pull opens the choice dialog. Agreed Nov 24 2026. */
         stashBackup();
-        mergeBox = { data, updatedAt, rIn, rLoc };
-        syncBusy = false; renderOverlays(); return;
+        if (silent) {
+          doMerge(data, updatedAt);
+          scheduleSync(); /* push the combined state */
+        } else {
+          mergeBox = { data, updatedAt, rIn, rLoc };
+          syncBusy = false; renderOverlays(); return;
+        }
       }
     } else { if (!silent) alert("Already up to date."); }
     syncBusy = false;
@@ -901,7 +906,7 @@ function renderSettings() {
   $("content").innerHTML = `
     <div class="card" style="margin-bottom:14px;">
       <h4>🔐 Security</h4>
-      <p class="muted" style="margin-bottom:6px">Build: 2026-11-23 · safe-sync r5 (cloud-owned revision)</p>
+      <p class="muted" style="margin-bottom:6px">Build: 2026-11-23 · safe-sync r6 (auto-merge, only manual pull asks)</p>
       <p class="muted">${pinHash ? "App lock is on, backed by this device's browser storage. Tap 🔒 (top right) to lock." : "No PIN set yet. Tap 🔑 (top right) to set one."}</p>
       ${pinHash ? '<button class="btn ghost" onclick="if(confirm(\'Remove PIN? Anyone opening this app on this device will see your data.\')){pinHash=null;save();render();}">Remove PIN</button>' : ""}
       <p class="muted" style="margin-top:8px">Encryption at rest of the whole database is the next security upgrade — after your test month.</p>
