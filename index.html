@@ -491,6 +491,13 @@ async function unpackState(content) {
   return { data: JSON.parse(new TextDecoder().decode(pt)), updatedAt: d.updatedAt };
 }
 /* ---------- safe pull: apply / merge / backup ---------- */
+function stateFP(s) {
+  /* full-content fingerprint (sorted by id) — used to detect "cloud copy is
+     already identical to this device", so the device never argues with its
+     own push (bug: equal rev + newer timestamp re-raised the dialog forever) */
+  const norm = (arr) => (arr || []).slice().sort((x, y) => String(x.id || "").localeCompare(String(y.id || "")));
+  return JSON.stringify([norm(s.txns), norm(s.cats), norm(s.accs), norm(s.mems)]);
+}
 function applyPull(data, updatedAt, rIn) {
   txns = data.txns || []; cats = data.cats || cats; accs = data.accs || accs; mems = data.mems || mems;
   try { localStorage.setItem("fty", JSON.stringify({ txns, cats, accs, mems, pinHash })); } catch (e) {}
@@ -569,6 +576,12 @@ async function pullSync(silent) {
        which made fresh edits look "already up to date" forever. */
     const rIn = data.rev || 0, rLoc = sync.lastRev || 0;
     const newer = rIn === 0 ? updatedAt !== (sync.lastSyncAt || "") : (rIn > rLoc || (rIn === rLoc && updatedAt !== (sync.lastSyncAt || "")));
+    const same = stateFP(data) === stateFP({ txns, cats, accs, mems });
+    if (same) {
+      /* cloud copy is byte-for-byte the same data — nothing to do, ever */
+      sync.lastRev = Math.max(rLoc, rIn); sync.lastSyncAt = updatedAt; sync.lastError = null; saveSync();
+      syncBusy = false; if (!silent) alert("Already in sync."); return;
+    }
     if (newer) {
       const hasLocal = (txns || []).length > 0 || (accs || []).length > 0 || (mems || []).length > 0;
       const cloudEmpty = !(data.txns || []).length && !(data.accs || []).length;
@@ -849,7 +862,7 @@ function renderSettings() {
   $("content").innerHTML = `
     <div class="card" style="margin-bottom:14px;">
       <h4>🔐 Security</h4>
-      <p class="muted" style="margin-bottom:6px">Build: 2026-11-23 · safe-sync (no preloads + merge)</p>
+      <p class="muted" style="margin-bottom:6px">Build: 2026-11-23 · safe-sync r2 (same-content handshake)</p>
       <p class="muted">${pinHash ? "App lock is on, backed by this device's browser storage. Tap 🔒 (top right) to lock." : "No PIN set yet. Tap 🔑 (top right) to set one."}</p>
       ${pinHash ? '<button class="btn ghost" onclick="if(confirm(\'Remove PIN? Anyone opening this app on this device will see your data.\')){pinHash=null;save();render();}">Remove PIN</button>' : ""}
       <p class="muted" style="margin-top:8px">Encryption at rest of the whole database is the next security upgrade — after your test month.</p>
