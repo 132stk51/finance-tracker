@@ -137,11 +137,12 @@ const DEFAULT_CATEGORIES = [
   { id: "interest", name: "Interest / Cashback", color: "#34d399", icon: "🏦", income: true },
 ];
 const DEFAULT_ACCOUNTS = [
-  { id: "gpay", name: "GPay (HDFC)", owner: "me" },
-  { id: "card-hdfc", name: "HDFC Credit Card", owner: "me" },
-  { id: "card-amex", name: "Amex Credit Card", owner: "me" },
-  { id: "bank", name: "SBI Bank", owner: "joint" },
+  { id: "gpay", name: "GPay (HDFC)" },
+  { id: "card-hdfc", name: "HDFC Credit Card" },
+  { id: "card-amex", name: "Amex Credit Card" },
+  { id: "bank", name: "SBI Bank" },
 ];
+const DEFAULT_MEMBERS = [];
 const DEFAULT_MEMBERS = [
   { id: "me", name: "You" },
   { id: "wife", name: "Wife" },
@@ -172,7 +173,7 @@ function makeSeed(cats, accs) {
 let txns = [], cats = [], accs = [], mems = [];
 let memDefault = "me";
 let view = "dashboard", month = monthStr(todayStr());
-let editingId = null, menu = null, menuGuard = 0, pressTimer = null;
+let editingId = null, menu = null, menuGuard = 0, pressTimer = null, needOwnerAsk = false;
 let pendingDelete = null, confirmBox = null, editorBox = null, showTrashFlag = false;
 let imp = null; // {step, rows, name, hasHeader, map:{date,payee,amount,sign,debit,credit,category}, msg}
 let pinHash = null, locked = false;
@@ -210,6 +211,15 @@ const accById = () => Object.fromEntries(accs.map((a) => [a.id, a]));
 const catSnap = (id) => { const c = catById()[id] || {}; return { categoryId: id, catName: c.name || id, catIcon: c.icon || "📦", catColor: c.color || "#94a3b8" }; };
 const accSnap = (id) => { const a = accById()[id] || {}; return { accountId: id, accName: a.name || id }; };
 const memSnap = (id) => { const m = (mems || []).find((x) => x.id === id) || {}; return { memberId: id, memName: m.name || id }; };
+function setDeviceOwner(id) { memDefault = id; save(); render(); }
+function maybeAskOwner() { if (!memDefault) { needOwnerAsk = true; renderOverlays(); } }
+function saveDeviceOwner() {
+  const nm = ($("devName") ? $("devName").value : "").trim();
+  if (!nm) { alert("Enter a name (e.g. Saikat or Wife)."); return; }
+  const ex = (mems || []).find((m) => m.name.toLowerCase() === nm.toLowerCase());
+  memDefault = ex ? ex.id : (mems.push({ id: uid(), name: nm }), mems[mems.length - 1].id);
+  needOwnerAsk = false; save(); render();
+}
 const usageCount = (kind, id) => txns.filter((t) => (kind === "cat" ? t.categoryId === id : kind === "acc" ? t.accountId === id : t.memberId === id)).length;
 const trash = () => txns.filter((t) => t.deletedAt).sort((a, b) => (b.deletedAt || "").localeCompare(a.deletedAt || ""));
 const daysLeft = (t) => Math.max(0, Math.ceil(7 - (Date.now() - new Date(t.deletedAt).getTime()) / 86400000));
@@ -249,7 +259,8 @@ function saveTxn() {
   };
   if (!f.amount || f.amount <= 0) { $("fErr").textContent = "Enter an amount."; return; }
   if (!catById()[f.category] || !accById()[f.account]) { $("fErr").textContent = "That category/account no longer exists — pick another."; return; }
-  memDefault = f.member;
+  const accLive = accById()[f.account];
+  f.member = (accLive && accLive.owner) || f.member; /* attribution follows the channel's owner */
   if (editingId) {
     txns = txns.map((t) => (t.id === editingId ? { ...t, ...f, ...catSnap(f.category), ...accSnap(f.account), ...memSnap(f.member), removed: false } : t));
     txns = txns.map((t) => (t.id === editingId && catById()[t.categoryId] ? { ...t, category: t.categoryId } : t));
@@ -304,7 +315,7 @@ function stepCatEditor() {
   }
   const it = arr.find((x) => x.id === eb.id);
   const n = usageCount(eb.kind, eb.id);
-  const label = eb.kind === "cat" ? "category" : eb.kind === "acc" ? "account" : "member";
+  const label = eb.kind === "cat" ? "category" : eb.kind === "acc" ? "account" : "owner";
   let title = "Edit " + label, body, cta, danger = false;
   if (n === 0) { body = `"${it.name}" is not used by any transaction. It will simply be updated.`; cta = "Save"; }
   else {
@@ -323,10 +334,10 @@ function stepCatEditor() {
 function askDeleteCA(kind, id) {
   const it = (kind === "cat" ? cats : kind === "acc" ? accs : mems).find((x) => x.id === id);
   const n = usageCount(kind, id);
-  const label = kind === "cat" ? "category" : kind === "acc" ? "account" : "member";
+  const label = kind === "cat" ? "category" : kind === "acc" ? "account" : "owner";
   let body = `You are deleting the ${label} "${it.name}". Past transactions will NOT be affected: the ${n} entr${n === 1 ? "y" : "ies"} recorded under it keep their saved name and remain in all totals. You also won't be able to pick it for future entries. Amounts are never deleted by removing a ${label}.`;
   confirmBox = { title: "Delete " + label, body, cta: `Delete "${it.name}"`, danger: true,
-    action: () => { if (kind === "cat") cats = cats.filter((c) => c.id !== id); else if (kind === "acc") accs = accs.filter((a) => a.id !== id); else { mems = mems.filter((m) => m.id !== id); if (memDefault === id) memDefault = mems[0] ? mems[0].id : "me"; } save(); render(); } };
+    action: () => { if (kind === "cat") cats = cats.filter((c) => c.id !== id); else if (kind === "acc") accs = accs.filter((a) => a.id !== id); else { mems = mems.filter((m) => m.id !== id); accs = accs.map((a) => (a.owner === id ? { ...a, owner: "" } : a)); if (memDefault === id) memDefault = ""; } save(); render(); } };
   renderOverlays();
 }
 
@@ -496,7 +507,7 @@ async function pullSync(silent) {
     if (updatedAt > (sync.lastSyncAt || "")) {
       txns = data.txns || []; cats = data.cats || cats; accs = data.accs || accs; mems = data.mems || mems;
       try { localStorage.setItem("fty", JSON.stringify({ txns, cats, accs, pinHash })); } catch (e) {}
-      sync.lastSyncAt = updatedAt; sync.lastError = null; saveSync(); render();
+      sync.lastSyncAt = updatedAt; sync.lastError = null; saveSync(); render(); maybeAskOwner();
       if (!silent) alert("Pulled latest data (" + txns.length + " entries).");
     } else { if (!silent) alert("Already up to date."); }
     syncBusy = false;
@@ -515,7 +526,7 @@ async function createSync() {
     const r = await fetch("https://api.github.com/gists", { method: "POST", headers: ghHeaders(token), body: JSON.stringify({ description: "Finance Tracker (encrypted sync)", public: false, files: { "finance-data.json": { content } } }) });
     const g = await r.json();
     if (!g.id) throw new Error(g.message || "create failed");
-    sync.gistId = g.id; sync.lastSyncAt = new Date().toISOString(); saveSync(); render();
+    sync.gistId = g.id; sync.lastSyncAt = new Date().toISOString(); saveSync(); render(); maybeAskOwner();
   } catch (e) { sync = old; saveSync(); alert("Could not create sync: " + (e.message || e)); }
 }
 async function linkSync() {
@@ -527,6 +538,7 @@ async function linkSync() {
   saveSync(); await pullSync(false);
   if (!sync || sync.lastError) { sync = old; saveSync(); render(); }
   else render();
+  maybeAskOwner();
 }
 function showSyncCode() {
   const code = JSON.stringify({ gistId: sync.gistId, keyB64: sync.keyB64 });
@@ -637,25 +649,23 @@ function renderDash() {
       <h4>Top merchants</h4>
       ${top.length ? top.map((m, i) => `<div class="legend"><span><span class="muted">${i + 1}.</span> ${esc(m.payee)}</span><span class="bad">-${fmt(m.amount)}</span></div>`).join("") : '<p class="muted">Nothing yet.</p>'}
     </div>
-    <div class="card" style="margin-bottom:14px;">
-      <h4>👤 Who spent what</h4>
+    <div class="card">
+      <h4>💳 Spending by channel</h4>
       ${(function () {
-        const byMem = {};
-        list.filter((t) => t.type === "expense").forEach((t) => { const k = t.memberId || (mems[0] ? mems[0].id : "me"); byMem[k] = byMem[k] || { name: t.memName || "", amount: 0 }; byMem[k].amount += t.amount; });
-        const rows = Object.entries(byMem).sort((a, b) => b[1].amount - a[1].amount);
+        const byAcc = {};
+        list.filter((t) => t.type === "expense").forEach((t) => { const k = t.accountId || "x"; const a = accById()[k]; byAcc[k] = byAcc[k] || { name: (a && a.name) || t.accName || k, owner: a && a.owner ? (mems.find((m) => m.id === a.owner) || {}).name || "" : "", amount: 0 }; byAcc[k].amount += t.amount; });
+        const rows = Object.entries(byAcc).sort((a, b) => b[1].amount - a[1].amount);
         if (!rows.length) return '<p class="muted">Nothing yet this month.</p>';
         const mx = Math.max(...rows.map((r) => r[1].amount), 1);
-        return rows.map(([id, v]) => {
-          const live = mems.find((m) => m.id === id);
-          return `<div class="legend" style="align-items:center;">
-            <span style="flex:1;min-width:0;">${esc(live ? live.name : (v.name || id) + " (removed)")}</span>
-            <span style="flex:2;height:8px;border-radius:4px;background:#1e293b;margin:0 8px;overflow:hidden;"><span style="display:block;height:100%;width:${Math.round((v.amount / mx) * 100)}%;background:${id === "joint" ? "#38bdf8" : "#818cf8"};"></span></span>
+        return rows.map(([id, v]) => `<div class="legend" style="align-items:center;">
+            <span style="flex:1;min-width:0;">${esc(v.name)}${v.owner ? ` <small class="muted">👤 ${esc(v.owner)}</small>` : ""}</span>
+            <span style="flex:2;height:8px;border-radius:4px;background:#1e293b;margin:0 8px;overflow:hidden;"><span style="display:block;height:100%;width:${Math.round((v.amount / mx) * 100)}%;background:#818cf8;"></span></span>
             <span class="bad" style="white-space:nowrap;">${fmt(v.amount)}</span>
-          </div>`;
-        }).join("");
+          </div>`).join("");
+      })()}
       })()}
       <div class="legend" style="border-top:1px solid #1e293b;margin-top:6px;padding-top:6px;">
-        <span style="font-weight:700;">Household total spent</span><span class="bad" style="font-weight:700;">${fmt(spend)}</span>
+        <span style="font-weight:700;">Total spent</span><span class="bad" style="font-weight:700;">${fmt(spend)}</span>
       </div>
     </div>`;
 }
@@ -663,7 +673,7 @@ function renderDash() {
 function txnRow(t, inTrash) {
   const removed1 = catById()[t.categoryId] ? "" : " (removed)", removed2 = accById()[t.accountId] ? "" : " (removed)";
   const src = t.source === "manual" ? "✍️ manual" : t.source === "statement" ? "🧾 statement" : "sample";
-  const meta = `${t.date} · ${esc(t.catName)}${removed1} · ${esc(t.accName)}${removed2}${t.memName ? " · 👤 " + esc(t.memName) : ""} · ${src}${t.matchedWith ? ' · <span class="ok">✅ verified</span>' : ""}`;
+const meta = `${t.date} · ${esc(t.catName)}${removed1} · ${esc(t.accName)}${removed2} · ${src}${t.matchedWith ? ' · <span class="ok">✅ verified</span>' : ""}`;
   const selBadge = selMode && !inTrash
     ? `<span onclick="event.stopPropagation();toggleSel('${t.id}')" style="width:22px;height:22px;border-radius:50%;flex-shrink:0;border:2px solid ${selSet.has(t.id) ? "#4f46e5" : "#475569"};background:${selSet.has(t.id) ? "#4f46e5" : "transparent"};color:#fff;font-size:13px;display:inline-flex;align-items:center;justify-content:center;">${selSet.has(t.id) ? "✓" : ""}</span>`
     : "";
@@ -767,7 +777,7 @@ function renderSettings() {
   $("content").innerHTML = `
     <div class="card" style="margin-bottom:14px;">
       <h4>🔐 Security</h4>
-      <p class="muted" style="margin-bottom:6px">Build: 2026-11-22 · sheet-fix 4 (tap fix)</p>
+      <p class="muted" style="margin-bottom:6px">Build: 2026-11-23 · owners-v2</p>
       <p class="muted">${pinHash ? "App lock is on, backed by this device's browser storage. Tap 🔒 (top right) to lock." : "No PIN set yet. Tap 🔑 (top right) to set one."}</p>
       ${pinHash ? '<button class="btn ghost" onclick="if(confirm(\'Remove PIN? Anyone opening this app on this device will see your data.\')){pinHash=null;save();render();}">Remove PIN</button>' : ""}
       <p class="muted" style="margin-top:8px">Encryption at rest of the whole database is the next security upgrade — after your test month.</p>
@@ -793,13 +803,13 @@ function renderSettings() {
       <p class="muted" style="margin-top:8px">Set each channel's 👤 owner via Edit. In the add sheet, picking "Spent by" brings that member's channels to the front — you can still pay for anyone from any account.</p>
     </div>
     <div class="card" style="margin-bottom:14px;">
-      <div class="row" style="justify-content:space-between;"><h4>👤 Members (${mems.length})</h4><button class="btn primary" style="font-size:11px;padding:6px 12px" onclick="openCatEditor('mem','add')">+ New</button></div>
-      ${mems.map((m) => { const n = usageCount("mem", m.id); return `<div class="row" style="padding:6px 0;border-bottom:1px solid rgba(30,41,59,.6);">
-        <span style="flex:1;font-size:13px;">${esc(m.name)}${m.id === memDefault ? ' <small class="ok">default on this device</small>' : ""}</span><small class="muted">${n}</small>
+      <div class="row" style="justify-content:space-between;"><h4>👤 Owners (${mems.length})</h4><button class="btn primary" style="font-size:11px;padding:6px 12px" onclick="openCatEditor('mem','add')">+ New</button></div>
+      ${mems.map((m) => { const ch = accs.filter((a) => a.owner === m.id).length; return `<div class="row" style="padding:6px 0;border-bottom:1px solid rgba(30,41,59,.6);">
+        <span style="flex:1;font-size:13px;cursor:pointer" onclick="setDeviceOwner('${m.id}')">${esc(m.name)}${m.id === memDefault ? ' <small class="ok">this device</small>' : ""}</span><small class="muted">${ch} channel${ch === 1 ? "" : "s"}</small>
         <button class="btn ghost" style="padding:4px 9px;font-size:11px;color:#818cf8" onclick="openCatEditor('mem','edit','${m.id}')">Edit</button>
         <button class="btn ghost" style="padding:4px 9px;font-size:11px;color:#fb7185" onclick="askDeleteCA('mem','${m.id}')">Delete</button>
       </div>`; }).join("")}
-      <p class="muted" style="margin-top:8px">Members tag who made each payment (You / Wife / Joint). Same rules: editing updates past entries after confirmation, deleting never touches them.</p>
+      <p class="muted" style="margin-top:8px">Tap an owner's name to make this device theirs. Owners own the spending channels (accounts/cards). Add or remove freely — nothing here is preloaded. Deleting an owner leaves its channels (they become unassigned); past entries keep their saved channel.</p>
     </div>
     <div class="card" style="margin-bottom:14px;">
       <h4>☁️ Cloud sync (phone ↔ web)</h4>
@@ -874,20 +884,30 @@ function renderAddSheet() {
     <div style="height:12px"></div>
     ${(function () {
       const ownerName = (id) => { const m = (mems || []).find((x) => x.id === id); return m ? m.name : ""; };
-      const mine = accs.filter((a) => (a.owner || "") === form.member);
-      const others = accs.filter((a) => (a.owner || "") !== form.member);
-      const chip = (a) => `<button class="chip" style="${form.account === a.id ? "background:#4f46e5;color:#fff;border-color:transparent" : ""}" data-addchip="acc" data-id="${a.id}">${esc(a.name)}${a.owner && (a.owner || "") !== form.member ? " <small>· " + esc(ownerName(a.owner)) + "</small>" : ""}</button>`;
-      let hh = '<div class="muted" style="margin-bottom:6px;">Spending channel (whose account it goes from)</div>';
-      if (mine.length) hh += `<div class="muted" style="font-size:11px;margin-bottom:5px;">${esc(ownerName(form.member) || "This member")}'s channels</div><div class="row" style="flex-wrap:wrap;gap:8px;">${mine.map(chip).join("")}</div><div style="height:8px"></div>`;
-      if (others.length) hh += `${mine.length ? '<div class="muted" style="font-size:11px;margin-bottom:5px;">Other channels</div>' : ""}<div class="row" style="flex-wrap:wrap;gap:8px;">${others.map(chip).join("")}</div>`;
+      const selOwner = mems.some((m) => m.id === form.member) ? form.member : "";
+      const chip = (a) => `<button class="chip" style="${form.account === a.id ? "background:#4f46e5;color:#fff;border-color:transparent" : ""}" data-addchip="acc" data-id="${a.id}">${esc(a.name)}${!editingId && a.owner && a.owner !== selOwner ? " <small>· " + esc(ownerName(a.owner)) + "</small>" : ""}</button>`;
+      let hh = "";
+      if (!editingId) {
+        hh += '<div class="muted" style="margin-bottom:6px;">Spent by</div>';
+        hh += `<div class="row" style="flex-wrap:wrap;gap:8px;">${(mems || []).map((m) => `<button class="chip" style="${selOwner === m.id ? "background:#4f46e5;color:#fff;border-color:transparent" : ""}" data-addchip="mem" data-id="${m.id}">👤 ${esc(m.name)}</button>`).join("")}</div>`;
+        const mine = selOwner ? accs.filter((a) => (a.owner || "") === selOwner) : accs;
+        hh += '<div class="muted" style="margin:10px 0 6px;">Spending channel (whose account it goes from)</div>';
+        hh += mine.length
+          ? `<div class="row" style="flex-wrap:wrap;gap:8px;">${mine.map(chip).join("")}</div>`
+          : `<p class="muted" style="font-size:12px;">No channels assigned to ${esc(ownerName(selOwner) || "this owner")} yet. Add one in Settings → Owners, or assign one via a channel's Edit.</p>`;
+      } else {
+        const groups = [];
+        (mems || []).forEach((m) => groups.push([m.name, accs.filter((a) => (a.owner || "") === m.id)]));
+        const un = accs.filter((a) => !(a.owner || ""));
+        if (un.length) groups.push(["Unassigned", un]);
+        hh += '<div class="muted" style="margin-bottom:6px;">Spending channel (whose account it goes from)</div>';
+        hh += groups.filter((g) => g[1].length).map(([nm, arr]) => `<div class="muted" style="font-size:11px;margin-bottom:5px;">👤 ${esc(nm)}</div><div class="row" style="flex-wrap:wrap;gap:8px;">${arr.map((a) => `<button class="chip" style="${form.account === a.id ? "background:#4f46e5;color:#fff;border-color:transparent" : ""}" data-addchip="acc" data-id="${a.id}">${esc(a.name)}</button>`).join("")}</div><div style="height:6px"></div>`).join("");
+      }
       return hh;
     })()}
     <div style="height:8px"></div>
     <div style="display:flex;gap:10px;"><div class="muted" style="font-size:12px;margin-bottom:5px;flex:1;">Date</div></div>
     <input id="fDate" type="date" value="${form.date}" />
-    <div style="height:10px"></div>
-    <div class="muted" style="margin-bottom:6px;">Spent by</div>
-    <div class="row" style="flex-wrap:wrap;gap:8px;">${mems.map((m) => `<button class="chip" style="${form.member === m.id ? "background:#4f46e5;color:#fff;border-color:transparent" : ""}" data-addchip="mem" data-id="${m.id}">👤 ${esc(m.name)}</button>`).join("")}</div>
     <div style="height:10px"></div>
     <input id="fNote" placeholder="Note (optional)" value="${esc(form.note)}" />
     <div id="fErr" class="bad" style="font-size:12px;min-height:16px;"></div>
@@ -897,6 +917,15 @@ function renderAddSheet() {
 
 function renderOverlays() {
   let h = "";
+  // device-owner ask (first open / new device)
+  if (needOwnerAsk) {
+    h += `<div class="overlay" style="z-index:50"><div class="panel">
+      <h3 style="margin-top:0">👋 Who is this device?</h3>
+      <p class="muted">First open on this device. Enter the owner's name — it becomes this device's default "Spent by" and decides which channels show first when adding. (Everyone shares the same sync; this tag is per device.)</p>
+      <input id="devName" placeholder="e.g. Saikat, Wife" />
+      <button class="btn primary" style="width:100%;margin-top:10px" onclick="saveDeviceOwner()">Save</button>
+    </div></div>`;
+  }
   // context menu
   if (menu) {
     const t = txns.find((z) => z.id === menu.id);
@@ -931,7 +960,7 @@ function renderOverlays() {
   if (editorBox) {
     const eb = editorBox;
     h += `<div class="overlay" style="z-index:35"><div class="panel">
-      <h3 style="margin-top:0">${eb.mode === "add" ? "New " : "Edit "}${eb.kind === "cat" ? "category" : eb.kind === "acc" ? "account" : "member"}</h3>
+      <h3 style="margin-top:0">${eb.mode === "add" ? "New " : "Edit "}${eb.kind === "cat" ? "category" : eb.kind === "acc" ? "account" : "owner"}</h3>
       ${eb.mode === "edit" && eb.kind !== "mem" ? '<p class="warn" style="font-size:12px;background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.3);border-radius:8px;padding:8px;">Editing will ask you to confirm before it touches past entries.</p>' : ""}
       <div class="muted" style="margin-bottom:5px;">Name</div>
       <input id="edName" value="${esc(eb.draft.name)}" oninput="editorBox.draft.name=this.value" />
@@ -968,7 +997,19 @@ function renderOverlays() {
 }
 function runConfirm() { const a = confirmBox && confirmBox.action; confirmBox = null; renderOverlays(); if (a) a(); }
 
+// one-time re-tag: entry attribution follows its channel's owner (agreed Nov 23 2026)
+(function retag() {
+  let ch = false;
+  txns.forEach((t) => {
+    const a = accById()[t.accountId];
+    const on = (a && a.owner) ? a.owner : t.memberId;
+    const nm = (a && a.owner && (mems || []).find((x) => x.id === a.owner)) ? (mems.find((x) => x.id === a.owner)).name : t.memName;
+    if (t.memberId !== on || t.memName !== nm) { t.memberId = on; t.memName = nm; ch = true; }
+  });
+  if (ch) save();
+})();
 render();
+if (!memDefault) maybeAskOwner();
 if (!location.hash) history.replaceState(null, "", "#dashboard");
 if (sync && sync.gistId && !locked) setTimeout(() => pullSync(true), 1000);
 // Keep already-open devices fresh: pull when tab becomes visible and every 60s
@@ -1016,4 +1057,3 @@ document.addEventListener("visibilitychange", () => {
 });
 </script>
 </body>
-</html>
