@@ -717,6 +717,19 @@ function showSyncCode() {
 function unlinkSync() {
   if (confirm("Unlink this device from cloud sync?\n\nData already on this device stays. The private Gist also stays (other linked devices keep syncing).")) { sync = null; saveSync(); render(); }
 }
+async function syncDoctor() {
+  if (!sync || !sync.gistId) { alert("This device is not linked to cloud sync."); return; }
+  try {
+    const r = await fetch("https://api.github.com/gists/" + sync.gistId, { headers: ghHeaders(sync.token) });
+    if (!r.ok) { alert("SYNC DOCTOR\nReading the gist failed: HTTP " + r.status + (r.status === 401 || r.status === 403 ? " — this device's token is invalid/expired or rate-limited." : r.status === 404 ? " — the gist does not exist for this token." : "")); return; }
+    const g = await r.json();
+    const f = g.files && g.files["finance-data.json"];
+    if (!f || !f.content) { alert("SYNC DOCTOR\nThe gist exists but has NO data file — no device has ever pushed."); return; }
+    const { data, updatedAt } = await unpackState(f.content);
+    const same = stateFP(data) === stateFP({ txns, cats, accs, mems });
+    alert("SYNC DOCTOR\n\n☁️ Cloud gist: rev " + (data.rev || 0) + " · " + (data.txns || []).length + " entries · " + (data.accs || []).length + " channels · last write " + new Date(updatedAt).toLocaleString("en-IN") + "\n\n📱 This device: " + txns.length + " entries · " + accs.length + " channels · remembers rev " + (sync.lastRev || 0) + "\n\nContent identical to cloud: " + (same ? "YES — this device already has everything the cloud has." : "NO — the cloud and this device genuinely differ. Tap ⬇️ Pull now to resolve.") + "\n\nTip: if entries still look wrong on screen, check you're viewing the right month (top dropdown).");
+  } catch (e) { alert("SYNC DOCTOR\nCould not read/decrypt the cloud copy: " + (e.message || e) + "\n\nIf it mentions decrypt, this device's Sync Code doesn't match the gist — Unlink and link with the Sync Code from the device you trust."); }
+}
 
 /* ---------- multi-select delete ---------- */
 function startSelect(id) { closeMenu(); selMode = true; selSet = new Set(id ? [id] : []); render(); }
@@ -953,7 +966,7 @@ function renderSettings() {
   $("content").innerHTML = `
     <div class="card" style="margin-bottom:14px;">
       <h4>🔐 Security</h4>
-      <p class="muted" style="margin-bottom:6px">Build: 2026-11-28 · sync v2.3 (network blip retry)</p>
+      <p class="muted" style="margin-bottom:6px">Build: 2026-11-28 · sync v2.4 (🔬 Sync doctor)</p>
       <p class="muted">${pinHash ? "App lock is on, backed by this device's browser storage. Tap 🔒 (top right) to lock." : "No PIN set yet. Tap 🔑 (top right) to set one."}</p>
       ${pinHash ? '<button class="btn ghost" onclick="if(confirm(\'Remove PIN? Anyone opening this app on this device will see your data.\')){pinHash=null;save();render();}">Remove PIN</button>' : ""}
       <p class="muted" style="margin-top:8px">Encryption at rest of the whole database is the next security upgrade — after your test month.</p>
@@ -1001,6 +1014,7 @@ function renderSettings() {
           <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:6px;">
             <button class="btn ghost" style="font-size:11px" onclick="pushSync(false)">⬆️ Push now</button>
             <button class="btn ghost" style="font-size:11px" onclick="pullSync(false)">⬇️ Pull now</button>
+            <button class="btn ghost" style="font-size:11px" onclick="syncDoctor()">🔬 Sync doctor</button>
           </div>
         </details>`
       : `
