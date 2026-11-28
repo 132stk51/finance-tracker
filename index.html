@@ -624,9 +624,17 @@ async function pushSync(silent) {
     if (view === "settings" && !locked) renderOverlays(), render();
   } catch (e) {
     syncBusy = false;
-    sync.lastError = String(e.message || e); saveSync();
+    const msg = String((e && e.message) || e);
+    /* mobile networks often drop the first request — one silent retry */
+    if (/Failed to fetch/i.test(msg) && !sync._fetchRetried) {
+      sync._fetchRetried = true; saveSync();
+      setTimeout(() => { if (sync) { delete sync._fetchRetried; pushSync(silent); } }, 1500);
+      return;
+    }
+    if (sync) delete sync._fetchRetried;
+    sync.lastError = msg; saveSync();
     if (!locked) renderOverlays();
-    if (!silent && !locked) alert("Sync push failed: " + sync.lastError + " (check internet or token)");
+    if (!silent && !locked) alert("Sync push failed: " + msg + " (check internet or token)");
   }
 }
 async function pullSync(silent) {
@@ -945,7 +953,7 @@ function renderSettings() {
   $("content").innerHTML = `
     <div class="card" style="margin-bottom:14px;">
       <h4>🔐 Security</h4>
-      <p class="muted" style="margin-bottom:6px">Build: 2026-11-28 · sync v2.2 (manual push always reports)</p>
+      <p class="muted" style="margin-bottom:6px">Build: 2026-11-28 · sync v2.3 (network blip retry)</p>
       <p class="muted">${pinHash ? "App lock is on, backed by this device's browser storage. Tap 🔒 (top right) to lock." : "No PIN set yet. Tap 🔑 (top right) to set one."}</p>
       ${pinHash ? '<button class="btn ghost" onclick="if(confirm(\'Remove PIN? Anyone opening this app on this device will see your data.\')){pinHash=null;save();render();}">Remove PIN</button>' : ""}
       <p class="muted" style="margin-top:8px">Encryption at rest of the whole database is the next security upgrade — after your test month.</p>
