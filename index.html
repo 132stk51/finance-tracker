@@ -631,7 +631,7 @@ async function pushSync(silent) {
 async function pullSync(silent) {
   if (!sync || !sync.gistId) return;
   try {
-    syncBusy = true;
+    syncBusy = true; syncBusySince = Date.now();
     const r = await fetch("https://api.github.com/gists/" + sync.gistId, { headers: ghHeaders(sync.token) });
     if (!r.ok) throw new Error("HTTP " + r.status);
     const g = await r.json();
@@ -659,8 +659,11 @@ async function pullSync(silent) {
            only a MANUAL pull opens the choice dialog. Agreed Nov 24 2026. */
         stashBackup();
         if (silent) {
+          syncBusy = false; /* release FIRST: scheduleSync no-ops while busy,
+             which silently dropped the follow-up push (Nov 28 phone stopped pushing) */
           doMerge(data, updatedAt);
           scheduleSync(); /* push the combined state */
+          return;
         } else {
           mergeBox = { data, updatedAt, rIn, rLoc };
           syncBusy = false; renderOverlays(); return;
@@ -941,7 +944,7 @@ function renderSettings() {
   $("content").innerHTML = `
     <div class="card" style="margin-bottom:14px;">
       <h4>🔐 Security</h4>
-      <p class="muted" style="margin-bottom:6px">Build: 2026-11-25 · sync v2 (cloud is final list · auto-merge · delete-as-write · 🔔 activity)</p>
+      <p class="muted" style="margin-bottom:6px">Build: 2026-11-28 · sync v2.1 (push-drop fix + busy watchdog)</p>
       <p class="muted">${pinHash ? "App lock is on, backed by this device's browser storage. Tap 🔒 (top right) to lock." : "No PIN set yet. Tap 🔑 (top right) to set one."}</p>
       ${pinHash ? '<button class="btn ghost" onclick="if(confirm(\'Remove PIN? Anyone opening this app on this device will see your data.\')){pinHash=null;save();render();}">Remove PIN</button>' : ""}
       <p class="muted" style="margin-top:8px">Encryption at rest of the whole database is the next security upgrade — after your test month.</p>
@@ -1220,8 +1223,9 @@ if (sync && sync.gistId && !locked) setTimeout(() => pullSync(true), 1000);
 if (sync && sync.gistId && sync.dirty && !locked) setTimeout(() => pushSync(true), 2000); /* offline writes queued while closed */
 addEventListener("online", () => { if (sync && sync.gistId && !locked) { pullSync(true); pushSync(true); } });
 // Keep already-open devices fresh: pull when tab becomes visible and every 60s
-let lastAutoPull = 0;
+let lastAutoPull = 0, syncBusySince = 0;
 setInterval(() => {
+  if (syncBusy && syncBusySince && Date.now() - syncBusySince > 45000) { syncBusy = false; } /* watchdog: a stuck busy flag must never block syncing */
   if (sync && sync.gistId && !locked && !syncBusy && Date.now() - lastAutoPull > 12000) {
     if (document.visibilityState === "visible" || document.hasFocus && document.hasFocus()) { lastAutoPull = Date.now(); pullSync(true); if (sync && sync.dirty) pushSync(true); }
   }
