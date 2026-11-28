@@ -76,6 +76,7 @@
     </div>
   </div>
   <div class="row" style="gap:8px;">
+    <button class="btn ghost" id="bellBtn" style="font-size:12px;padding:7px 12px;">🔔</button>
     <button class="btn ghost" id="lockBtn" style="font-size:12px;padding:7px 12px;">🔒</button>
   </div>
 </header>
@@ -179,7 +180,7 @@ let txns = [], cats = [], accs = [], mems = [];
 let memDefault = "";
 let view = "dashboard", month = monthStr(todayStr());
 let editingId = null, menu = null, menuGuard = 0, pressTimer = null, needOwnerAsk = false;
-let pendingDelete = null, confirmBox = null, editorBox = null, showTrashFlag = false, mergeBox = null;
+let pendingDelete = null, confirmBox = null, editorBox = null, showTrashFlag = false, mergeBox = null, notifBox = false, evtLog = [];
 let imp = null; // {step, rows, name, hasHeader, map:{date,payee,amount,sign,debit,credit,category}, msg}
 let pinHash = null, locked = false;
 let selMode = false, selSet = new Set();
@@ -206,6 +207,7 @@ function loadAll() {
     }
   } catch (e) { cats = []; accs = []; mems = []; txns = []; }
   try { const p = JSON.parse(localStorage.getItem("ftyPrefs") || "null"); if (p && p.memDefault) memDefault = p.memDefault; } catch (e) {}
+  try { evtLog = JSON.parse(localStorage.getItem("ftyEvt") || "[]"); } catch (e) { evtLog = []; }
 }
 loadAll();
 // purge trash older than 7 days
@@ -220,6 +222,17 @@ const accById = () => Object.fromEntries(accs.map((a) => [a.id, a]));
 const catSnap = (id) => { const c = catById()[id] || {}; return { categoryId: id, catName: c.name || id, catIcon: c.icon || "📦", catColor: c.color || "#94a3b8" }; };
 const accSnap = (id) => { const a = accById()[id] || {}; return { accountId: id, accName: a.name || id }; };
 const memSnap = (id) => { const m = (mems || []).find((x) => x.id === id) || {}; return { memberId: id, memName: m.name || id }; };
+const nowIso = () => new Date().toISOString();
+/* cloud-sequenced event log (Sync v2 rule 10): every add/edit/delete is
+   registered here, travels INSIDE the encrypted payload, and feeds the 🔔 panel */
+function saveEvt() { try { localStorage.setItem("ftyEvt", JSON.stringify(evtLog)); } catch (e) {} }
+function logEvent(act, t) {
+  if (!t) return;
+  evtLog.push({ at: nowIso(), act, desc: (t.payee || t.note || t.catName || "Entry") + " · ₹" + t.amount, dev: ((mems || []).find((m) => m.id === memDefault) || {}).name || "device" });
+  if (evtLog.length > 60) evtLog = evtLog.slice(-60);
+  saveEvt();
+}
+const evtSeen = () => (sync && sync.evtSeen) || "";
 function setDeviceOwner(id) { memDefault = id; save(); render(); }
 function maybeAskOwner() { if (!memDefault) { needOwnerAsk = true; renderOverlays(); } }
 function saveDeviceOwner() {
@@ -271,10 +284,13 @@ function saveTxn() {
   const accLive = accById()[f.account];
   f.member = (accLive && accLive.owner) || f.member; /* attribution follows the channel's owner */
   if (editingId) {
-    txns = txns.map((t) => (t.id === editingId ? { ...t, ...f, ...catSnap(f.category), ...accSnap(f.account), ...memSnap(f.member), removed: false } : t));
+    txns = txns.map((t) => (t.id === editingId ? { ...t, ...f, ...catSnap(f.category), ...accSnap(f.account), ...memSnap(f.member), removed: false, updatedAt: nowIso() } : t));
     txns = txns.map((t) => (t.id === editingId && catById()[t.categoryId] ? { ...t, category: t.categoryId } : t));
+    logEvent("edit", txns.find((t) => t.id === editingId));
   } else {
-    txns.push({ id: uid(), source: "manual", ...f, ...catSnap(f.category), ...accSnap(f.account), amount: f.amount, ...memSnap(f.member), removed: false });
+    const ne = { id: uid(), source: "manual", ...f, ...catSnap(f.category), ...accSnap(f.account), amount: f.amount, ...memSnap(f.member), removed: false, updatedAt: nowIso() };
+    txns.push(ne);
+    logEvent("add", ne);
   }
   save(); closePanel(); render();
 }
@@ -282,10 +298,12 @@ function saveTxn() {
 /* ---------- delete / trash ---------- */
 function askDelete(id) { pendingDelete = txns.find((t) => t.id === id); closeMenu(); renderOverlays(); }
 function moveToTrash() {
-  txns = txns.map((t) => (t.id === pendingDelete.id ? { ...t, deletedAt: new Date().toISOString() } : t));
+  const vict = pendingDelete && txns.find((t) => t.id === pendingDelete.id);
+  txns = txns.map((t) => (t.id === pendingDelete.id ? { ...t, deletedAt: nowIso(), updatedAt: nowIso() } : t));
+  logEvent("del", vict);
   save(); pendingDelete = null; closeMenu(); render();
 }
-function restoreTxn(id) { txns = txns.map((t) => (t.id === id ? (({ deletedAt, ...r }) => r)(t) : t)); save(); render(); }
+function restoreTxn(id) { txns = txns.map((t) => (t.id === id ? { ...(({ deletedAt, ...r }) => r)(t), updatedAt: nowIso() } : t)); save(); render(); }
 function permDelete(id) { txns = txns.filter((t) => t.id !== id); save(); render(); }
 
 /* ---------- context menu ---------- */
@@ -483,7 +501,7 @@ async function packState(baseRev) {
      they saw (baseRev), so the gist's rev always moves +1 globally no matter
      which device pushes. Device-local lastRev is only a pull baseline. */
   const rev = (baseRev != null ? baseRev : (sync.lastRev || 0)) + 1;
-  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(JSON.stringify({ txns, cats, accs, mems, rev })));
+  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(JSON.stringify({ txns, cats, accs, mems, rev, log: evtLog.slice(-60) })));
   sync._nextRev = rev;
   return JSON.stringify({ iv: b64e(iv), data: b64e(ct), updatedAt: new Date().toISOString() });
 }
@@ -501,10 +519,13 @@ function stateFP(s) {
   const norm = (arr) => (arr || []).slice().sort((x, y) => String(x.id || "").localeCompare(String(y.id || "")));
   return JSON.stringify([norm(s.txns), norm(s.cats), norm(s.accs), norm(s.mems)]);
 }
-function applyPull(data, updatedAt, rIn) {
+function applyPull(data, updatedAt, rIn, manual) {
+  const dup = manual ? (data.txns || []).filter((c) => (txns || []).some((l) => l.id === c.id)).length : 0;
   txns = data.txns || []; cats = data.cats || cats; accs = data.accs || accs; mems = data.mems || mems;
+  if ((data.log || []).length >= (evtLog || []).length) { evtLog = data.log; saveEvt(); }
   try { localStorage.setItem("fty", JSON.stringify({ txns, cats, accs, mems, pinHash })); } catch (e) {}
   sync.lastRev = rIn || 0; /* adopt the cloud's own rev exactly — a higher LOCAL number must never mask the gist's state */ sync.lastSyncAt = updatedAt; sync.lastError = null; saveSync(); render(); maybeAskOwner();
+  return dup;
 }
 function stashBackup() {
   try { localStorage.setItem("ftyPrevSync", JSON.stringify({ txns, cats, accs, mems, pinHash, savedAt: new Date().toISOString() })); } catch (e) {}
@@ -516,38 +537,44 @@ function restorePrevSync() {
   save(); render(); alert("Restored the data as it was before the last sync merge/pull (backup from " + new Date(d.savedAt).toLocaleString("en-IN") + ").\n\nIf this is the correct copy, push it: Settings → ⬆️ Push now — or just make any change, it auto-pushes.");
 }
 function doMerge(data, updatedAt) {
-  /* union of the two datasets. Same-named categories/channels/owners on both
-     devices are treated as the SAME item (cloud entries are re-pointed to the
-     local id); otherwise the cloud item is added. Entries are unioned by id,
-     so nothing is lost — but note: an entry deleted on one device can reappear
-     if the other device's copy still has it (acceptable for now). */
+  /* Sync v2: per-entry version winner (latest updatedAt/deletedAt), so a
+     deletion registered later always beats an older live copy — no resurrection */
+  const ver = (t) => t.updatedAt || t.deletedAt || "";
   const byName = (arr) => { const m = {}; (arr || []).forEach((x) => { if (x && x.name) m[String(x.name).toLowerCase()] = x.id; }); return m; };
   const catN = byName(cats), accN = byName(accs), memN = byName(mems), lid = {};
   (data.cats || []).forEach((c) => { if (cats.some((x) => x.id === c.id)) return; if (c.name && catN[c.name.toLowerCase()]) lid["cat:" + c.id] = catN[c.name.toLowerCase()]; else cats.push(c); });
   (data.accs || []).forEach((a) => { if (accs.some((x) => x.id === a.id)) return; if (a.name && accN[a.name.toLowerCase()]) lid["acc:" + a.id] = accN[a.name.toLowerCase()]; else accs.push(a); });
   (data.mems || []).forEach((m) => { if (mems.some((x) => x.id === m.id)) return; if (m.name && memN[m.name.toLowerCase()]) lid["mem:" + m.id] = memN[m.name.toLowerCase()]; else mems.push(m); });
-  const seen = new Set(txns.map((t) => t.id));
+  const cmap = new Map(txns.map((t) => [t.id, t])), dups = new Set();
   (data.txns || []).forEach((t) => {
-    if (seen.has(t.id)) return;
-    txns.push({ ...t, categoryId: lid["cat:" + t.categoryId] || t.categoryId, accountId: lid["acc:" + t.accountId] || t.accountId, memberId: lid["mem:" + t.memberId] || t.memberId });
+    const l = cmap.get(t.id);
+    if (!l) { cmap.set(t.id, { ...t, categoryId: lid["cat:" + t.categoryId] || t.categoryId, accountId: lid["acc:" + t.accountId] || t.accountId, memberId: lid["mem:" + t.memberId] || t.memberId }); return; }
+    dups.add(t.id);
+    if (ver(t) > ver(l)) cmap.set(t.id, { ...t, categoryId: lid["cat:" + t.categoryId] || t.categoryId, accountId: lid["acc:" + t.accountId] || t.accountId, memberId: lid["mem:" + t.memberId] || t.memberId });
   });
+  txns = [...cmap.values()];
+  const cl = data.log || [], key = (e) => e.at + "|" + e.act + "|" + e.desc;
+  const have = new Set(evtLog.map(key));
+  evtLog = evtLog.concat(cl.filter((e) => !have.has(key(e)))).slice(-60);
+  saveEvt();
   sync.lastRev = data.rev || 0; sync.lastSyncAt = updatedAt; sync.lastError = null;
   /* persist WITHOUT save(): save() auto-schedules a push, and doMerge now also
      runs inside pushSync's preflight — that would re-trigger pushSync forever */
   try { localStorage.setItem("fty", JSON.stringify({ txns, cats, accs, mems, pinHash })); } catch (e) {}
   saveSync(); render(); maybeAskOwner();
+  return dups.size;
 }
 function resolveMerge(mode) {
   const mb = mergeBox; mergeBox = null; renderOverlays();
   if (!mb) return;
-  if (mode === "merge") { doMerge(mb.data, mb.updatedAt); scheduleSync(); alert("Merged: this device now has " + (txns || []).length + " entries (cloud entries added; duplicates skipped). It is being pushed up now."); }
+  if (mode === "merge") { const d = doMerge(mb.data, mb.updatedAt); scheduleSync(); alert("Merged: this device now has " + (txns || []).length + " entries." + (d ? " " + d + " duplicate entries skipped." : "") + " It is being pushed up now."); }
   else if (mode === "cloud") { applyPull(mb.data, mb.updatedAt); alert("This device now matches the cloud. If the cloud copy was wrong, use Settings → 🕘 Restore last pre-sync backup."); }
   else { sync._bypassPullGuard = true; sync.lastSyncAt = sync.lastSyncAt || "re-pushed"; pushSync(false); delete sync._bypassPullGuard; }
   render();
 }
 
 function ghHeaders(token) { return { Authorization: "token " + token, Accept: "application/vnd.github+json" }; }
-function scheduleSync() { if (!sync || syncBusy) return; clearTimeout(pushTimer); pushTimer = setTimeout(() => pushSync(true), 2500); }
+function scheduleSync() { if (!sync || syncBusy) return; sync.dirty = true; saveSync(); clearTimeout(pushTimer); pushTimer = setTimeout(() => pushSync(true), 2500); }
 async function pushSync(silent) {
   if (!sync || !sync.gistId) return;
   /* guard: a device that has never pulled cloud data must not push —
@@ -591,7 +618,7 @@ async function pushSync(silent) {
     const content = await packState(cloudRev);
     const r = await fetch("https://api.github.com/gists/" + sync.gistId, { method: "PATCH", headers: ghHeaders(sync.token), body: JSON.stringify({ files: { "finance-data.json": { content } } }) });
     if (!r.ok) throw new Error("HTTP " + r.status);
-    sync.lastSyncAt = new Date().toISOString(); sync.lastError = null;
+    sync.lastSyncAt = new Date().toISOString(); sync.lastError = null; sync.dirty = false;
     sync.lastRev = sync._nextRev || ((sync.lastRev || 0) + 1); delete sync._nextRev; saveSync();
     if (view === "settings" && !locked) renderOverlays(), render();
   } catch (e) {
@@ -625,8 +652,8 @@ async function pullSync(silent) {
       const hasLocal = (txns || []).length > 0 || (accs || []).length > 0 || (mems || []).length > 0;
       const cloudEmpty = !(data.txns || []).length && !(data.accs || []).length;
       if (!hasLocal || cloudEmpty) {
-        applyPull(data, updatedAt, rIn);
-        if (!silent) alert("Pulled latest data (" + (txns || []).length + " entries).");
+        const dup = applyPull(data, updatedAt, rIn, !silent);
+        if (!silent) alert("Pulled latest data (" + (txns || []).length + " entries." + (dup ? " " + dup + " duplicate entries skipped." : "") + ") All good to go.");
       } else {
         /* divergent. Automatic pulls resolve silently (union merge, backup taken);
            only a MANUAL pull opens the choice dialog. Agreed Nov 24 2026. */
@@ -699,7 +726,9 @@ function askDeleteMany() {
     cta: `Move ${ids.length} to Trash`, danger: true,
     action: () => {
       const now = new Date().toISOString();
-      txns = txns.map((t) => (ids.includes(t.id) ? { ...t, deletedAt: now } : t));
+      const vict = txns.find((t) => ids.includes(t.id));
+      logEvent("del", vict);
+      txns = txns.map((t) => (ids.includes(t.id) ? { ...t, deletedAt: now, updatedAt: now } : t));
       save(); exitSelect();
     },
   };
@@ -721,6 +750,12 @@ function render() {
     `<button class="${view === id ? "on" : ""}" onclick="go('${id}')"><span>${ic}</span>${lb}</button>`).join("");
   $("lockBtn").textContent = pinHash ? "🔒" : "🔑";
   $("lockBtn").onclick = tryLock;
+  const bell = $("bellBtn");
+  if (bell) {
+    const unseen = evtLog.filter((e) => e.at > evtSeen()).length;
+    bell.textContent = unseen ? "🔔 " + unseen : "🔔";
+    bell.onclick = () => { notifBox = true; sync = sync || {}; sync.evtSeen = nowIso(); saveSync(); renderOverlays(); const b = $("bellBtn"); if (b) b.textContent = "🔔"; };
+  }
   // month selector
   const months = [...new Set(txns.map((t) => monthStr(t.date)))].sort().reverse();
   if (!months.includes(month)) months.unshift(month);
@@ -906,7 +941,7 @@ function renderSettings() {
   $("content").innerHTML = `
     <div class="card" style="margin-bottom:14px;">
       <h4>🔐 Security</h4>
-      <p class="muted" style="margin-bottom:6px">Build: 2026-11-23 · safe-sync r6 (auto-merge, only manual pull asks)</p>
+      <p class="muted" style="margin-bottom:6px">Build: 2026-11-25 · sync v2 (cloud is final list · auto-merge · delete-as-write · 🔔 activity)</p>
       <p class="muted">${pinHash ? "App lock is on, backed by this device's browser storage. Tap 🔒 (top right) to lock." : "No PIN set yet. Tap 🔑 (top right) to set one."}</p>
       ${pinHash ? '<button class="btn ghost" onclick="if(confirm(\'Remove PIN? Anyone opening this app on this device will see your data.\')){pinHash=null;save();render();}">Remove PIN</button>' : ""}
       <p class="muted" style="margin-top:8px">Encryption at rest of the whole database is the next security upgrade — after your test month.</p>
@@ -944,13 +979,18 @@ function renderSettings() {
       <h4>☁️ Cloud sync (phone ↔ web)</h4>
       <p class="muted">Syncs through a <b>private GitHub Gist</b>. The app uploads only an <b>encrypted copy</b> of your data; the decryption key lives on your devices, never on GitHub. Saving a change pushes automatically; opening the app pulls newer data.</p>
       ${sync && sync.gistId ? `
-        <p class="muted">Linked to gist <code>${esc(sync.gistId.slice(0, 8))}…</code>${sync.lastSyncAt ? " · Last sync: " + new Date(sync.lastSyncAt).toLocaleString("en-IN") : ""}${sync.lastError ? ` <span class="bad">· Error: ${esc(sync.lastError)}</span>` : ' <span class="ok">· ✓</span>'}</p>
+        <p class="muted">Linked to gist <code>${esc(String(sync.gistId).slice(0, 8))}…</code>${sync.lastSyncAt ? " · Last sync: " + new Date(sync.lastSyncAt).toLocaleString("en-IN") : ""}${sync.lastError ? ` <span class="bad">· Error: ${esc(sync.lastError)}</span>` : ' <span class="ok">· ✓</span>'}</p>
+        <p class="muted">Syncing is fully automatic: every write goes to the cloud within seconds, and this device copies the cloud every 15s (and on open/focus). ${sync.dirty ? '<span class="bad">· Unsynced local changes waiting for internet…</span>' : ""}</p>
         <div class="row" style="flex-wrap:wrap;gap:8px;">
-          <button class="btn primary" onclick="pushSync(false)">⬆️ Push now</button>
-          <button class="btn primary" onclick="pullSync(false)">⬇️ Pull now</button>
           <button class="btn ghost" onclick="showSyncCode()">🔗 Show Sync Code</button>
           <button class="btn ghost" style="color:#fb7185" onclick="unlinkSync()">Unlink</button>
-        </div>`
+        </div>
+        <details style="margin-top:6px"><summary class="muted" style="font-size:11.5px">Diagnostics (only if something looks wrong)</summary>
+          <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:6px;">
+            <button class="btn ghost" style="font-size:11px" onclick="pushSync(false)">⬆️ Push now</button>
+            <button class="btn ghost" style="font-size:11px" onclick="pullSync(false)">⬇️ Pull now</button>
+          </div>
+        </details>`
       : `
         <div class="muted" style="margin-bottom:8px;"><b>Every device needs its own GitHub token</b> (github.com → Settings → Developer settings → Personal access tokens → <i>Generate new token (classic)</i> → tick only the <b>gist</b> scope). Each device can reuse the same gist; data stays end-to-end encrypted.</div>
         <input id="ghToken" placeholder="ghp_… your token (stored only on this device)" style="font-size:12px;margin-bottom:8px;" />
@@ -1115,6 +1155,20 @@ function renderOverlays() {
       <button class="btn primary" style="flex:1" onclick="stepCatEditor()">${eb.mode === "add" ? "Create" : "Continue"}</button></div>
     </div></div>`;
   }
+  // notification panel (Sync v2 rule 10)
+  if (notifBox) {
+    notifBox = false;
+    const list = evtLog.slice().reverse();
+    h += `<div class="overlay" style="z-index:47"><div class="panel" style="max-height:70vh;overflow:auto">
+      <h3 style="margin-top:0">🔔 Sync activity</h3>
+      ${list.length ? list.map((e) => `<div style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:1px solid #1e293b">
+        <span>${e.act === "add" ? "➕" : e.act === "del" ? "🗑️" : "✏️"}</span>
+        <div style="flex:1"><div style="font-size:13px;color:#e2e8f0">${esc(e.desc)}</div>
+        <small class="muted">${esc(e.dev || "device")} · ${new Date(e.at).toLocaleString("en-IN")}</small></div></div>`).join("") : `<p class="muted">No activity yet — entries you or other devices add, edit or delete will appear here in cloud order.</p>`}
+      <p class="muted" style="font-size:11.5px">Shown oldest-to-newest of what was registered in the cloud in exact sequence.</p>
+      <div class="row"><button class="btn primary" style="flex:1" onclick="renderOverlays()">Close</button></div>
+    </div></div>`;
+  }
   // sync conflict / merge chooser
   if (mergeBox) {
     const mb = mergeBox;
@@ -1163,13 +1217,15 @@ render();
 if (!memDefault) maybeAskOwner();
 if (!location.hash) history.replaceState(null, "", "#dashboard");
 if (sync && sync.gistId && !locked) setTimeout(() => pullSync(true), 1000);
+if (sync && sync.gistId && sync.dirty && !locked) setTimeout(() => pushSync(true), 2000); /* offline writes queued while closed */
+addEventListener("online", () => { if (sync && sync.gistId && !locked) { pullSync(true); pushSync(true); } });
 // Keep already-open devices fresh: pull when tab becomes visible and every 60s
 let lastAutoPull = 0;
 setInterval(() => {
-  if (sync && sync.gistId && !locked && !syncBusy && Date.now() - lastAutoPull > 45000) {
-    if (document.visibilityState === "visible" || document.hasFocus && document.hasFocus()) { lastAutoPull = Date.now(); pullSync(true); }
+  if (sync && sync.gistId && !locked && !syncBusy && Date.now() - lastAutoPull > 12000) {
+    if (document.visibilityState === "visible" || document.hasFocus && document.hasFocus()) { lastAutoPull = Date.now(); pullSync(true); if (sync && sync.dirty) pushSync(true); }
   }
-}, 60000);
+}, 15000);
 // capture phase: the sheet panel stops click bubbling, so page-level handling must run BEFORE it
 document.addEventListener("click", (e) => {
   const t = e.target;
