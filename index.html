@@ -601,7 +601,8 @@ async function pushSync(silent) {
           cloudRev = rIn || null;
           const same = stateFP(data) === stateFP({ txns, cats, accs, mems });
           if (same) {
-            sync.lastRev = Math.max(rLoc, rIn); sync.lastSyncAt = updatedAt; sync.lastError = null; saveSync();
+            sync.lastRev = Math.max(rLoc, rIn); sync.lastSyncAt = updatedAt; sync.lastError = null; sync.dirty = false; saveSync();
+            if (!silent) alert("Cloud already has exactly this data — nothing to push. If the status said 'waiting', that flag is now cleared.");
             renderOverlays(), render();
             return; /* cloud already identical — nothing to push */
           }
@@ -944,7 +945,7 @@ function renderSettings() {
   $("content").innerHTML = `
     <div class="card" style="margin-bottom:14px;">
       <h4>🔐 Security</h4>
-      <p class="muted" style="margin-bottom:6px">Build: 2026-11-28 · sync v2.1 (push-drop fix + busy watchdog)</p>
+      <p class="muted" style="margin-bottom:6px">Build: 2026-11-28 · sync v2.2 (manual push always reports)</p>
       <p class="muted">${pinHash ? "App lock is on, backed by this device's browser storage. Tap 🔒 (top right) to lock." : "No PIN set yet. Tap 🔑 (top right) to set one."}</p>
       ${pinHash ? '<button class="btn ghost" onclick="if(confirm(\'Remove PIN? Anyone opening this app on this device will see your data.\')){pinHash=null;save();render();}">Remove PIN</button>' : ""}
       <p class="muted" style="margin-top:8px">Encryption at rest of the whole database is the next security upgrade — after your test month.</p>
